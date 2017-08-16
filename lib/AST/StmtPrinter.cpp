@@ -836,6 +836,7 @@ void OMPClausePrinter::VisitOMPReductionClause(OMPReductionClause *Node) {
   }
 }
 
+#if 0
 void OMPClausePrinter::VisitOMPTaskReductionClause(
     OMPTaskReductionClause *Node) {
   if (!Node->varlist_empty()) {
@@ -880,6 +881,7 @@ void OMPClausePrinter::VisitOMPInReductionClause(OMPInReductionClause *Node) {
     OS << ")";
   }
 }
+#endif
 
 void OMPClausePrinter::VisitOMPLinearClause(OMPLinearClause *Node) {
   if (!Node->varlist_empty()) {

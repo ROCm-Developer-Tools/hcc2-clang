@@ -368,7 +368,7 @@ private:
   /// isTokenSpecial - True if this token requires special consumption methods.
   bool isTokenSpecial() const {
     return isTokenStringLiteral() || isTokenParen() || isTokenBracket() ||
-           isTokenBrace() || Tok.is(tok::code_completion) || Tok.isAnnotation();
+           isTokenBrace() || Tok.is(tok::code_completion) ;
   }
 
   /// \brief Returns true if the current token is '=' or is a type of '='.

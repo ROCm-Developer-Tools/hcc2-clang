@@ -226,12 +226,15 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // Local address space cannot have an initializer.
   // HCC tile_static variables cannot have an initializer.
+  // Shared OMP or CUDA device cannot have initializer
   llvm::Constant *Init = nullptr;
-  if (Ty.getAddressSpace() != LangAS::opencl_local &&
-      !D.hasAttr<HCCTileStaticAttr>())
-    Init = EmitNullConstant(Ty);
-  else
+  if ( (Ty.getAddressSpace() == LangAS::opencl_local) ||
+        D.hasAttr<HCCTileStaticAttr>() ||
+       (TargetAS == getContext().getTargetAddressSpace(LangAS::cuda_shared)
+        && (getLangOpts().OpenMPIsDevice || getLangOpts().CUDAIsDevice)) )
     Init = llvm::UndefValue::get(LTy);
+  else
+    Init = EmitNullConstant(Ty);
 
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
@@ -408,7 +411,10 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // If this value has an initializer, emit it.
   if (D.getInit() && !isCudaSharedVar && !isHCCTileStaticVar)
     var = AddInitializerToStaticVarDecl(D, var);
-
+  else if (isCudaSharedVar && !isHCCTileStaticVar &&
+    (getContext().getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)) {
+    var->setInitializer(llvm::UndefValue::get(var->getType()->getElementType()));
+  }
   var->setAlignment(alignment.getQuantity());
 
   if (D.hasAttr<AnnotateAttr>())

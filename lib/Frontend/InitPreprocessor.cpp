@@ -566,7 +566,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   Builder.defineMacro("__hcc_major__", TOSTR(KALMAR_VERSION_MAJOR));
   Builder.defineMacro("__hcc_minor__", TOSTR(KALMAR_VERSION_MINOR));
   Builder.defineMacro("__hcc_patchlevel__", TOSTR(KALMAR_VERSION_PATCH));
-  Builder.defineMacro("__hcc_version__", TOSTR(KALMAR_VERSION_STRING));
+  Builder.defineMacro("__hcc_version__", TOSTR(HCC2_VERSION_STRING));
   Builder.defineMacro("__hcc_workweek__", TOSTR(KALMAR_VERSION_WORKWEEK));
 
   // hcc backend macro. possible values are:
@@ -1008,6 +1008,15 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     break;
   }
 
+  // If using OpenMP, we set these experimental macros to allow the user to
+  // do different things for host and device in the same compilation unit.
+  if (LangOpts.OpenMP) {
+    if (LangOpts.OpenMPIsDevice)
+      Builder.defineMacro("__OPENMP_IS_DEVICE__");
+    else
+      Builder.defineMacro("__OPENMP_IS_HOST__");
+  }
+
   // CUDA device path compilaton
   if (LangOpts.CUDAIsDevice) {
     // The CUDA_ARCH value is set for the GPU target specified in the NVPTX
@@ -1065,7 +1074,8 @@ void clang::InitializePreprocessor(
   if (InitOpts.UsePredefines) {
     // FIXME: This will create multiple definitions for most of the predefined
     // macros. This is not the right way to handle this.
-    if ((LangOpts.CUDA || LangOpts.CPlusPlusAMP) && PP.getAuxTargetInfo())
+    if ((LangOpts.CUDA || LangOpts.CPlusPlusAMP || LangOpts.OpenMPIsDevice)
+       && PP.getAuxTargetInfo())
       InitializePredefinedMacros(*PP.getAuxTargetInfo(), LangOpts, FEOpts,
                                  Builder);
 

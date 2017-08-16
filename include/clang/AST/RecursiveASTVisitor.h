@@ -3016,6 +3016,7 @@ RecursiveASTVisitor<Derived>::VisitOMPReductionClause(OMPReductionClause *C) {
   return true;
 }
 
+#if 0
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPTaskReductionClause(
     OMPTaskReductionClause *C) {
@@ -3061,6 +3062,7 @@ bool RecursiveASTVisitor<Derived>::VisitOMPInReductionClause(
     TRY_TO(TraverseStmt(E));
   return true;
 }
+#endif
 
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPFlushClause(OMPFlushClause *C) {

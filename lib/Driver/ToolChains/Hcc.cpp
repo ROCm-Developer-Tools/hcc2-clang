@@ -334,7 +334,7 @@ void HCC::CXXAMPLink::ConstructJob(
         AMDGPUTargetVector.cbegin(), AMDGPUTargetVector.cend(), auto_tgt);
 
     if (cnt > 1) C.getDriver().Diag(diag::warn_amdgpu_target_auto_nonsingular);
-    if (cnt == AMDGPUTargetVector.size()) {
+    if (cnt == (signed) AMDGPUTargetVector.size()) {
         AMDGPUTargetVector = detect_and_add_targets(C, getToolChain());
     }
     AMDGPUTargetVector.erase(

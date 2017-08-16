@@ -550,6 +550,8 @@ def no_cuda_version_check : Flag<["--"], "no-cuda-version-check">,
   HelpText<"Don't error out if the detected version of the CUDA install is "
            "too low for the requested CUDA gpu architecture.">;
 def no_cuda_noopt_device_debug : Flag<["--"], "no-cuda-noopt-device-debug">;
+def gcndevice_path_EQ : Joined<["--"], "gcn-device-path=">, Group<i_Group>,
+  HelpText<"Path to GCN Device Libraries, as .bc files">;
 def cuda_path_EQ : Joined<["--"], "cuda-path=">, Group<i_Group>,
   HelpText<"CUDA installation path">;
 def ptxas_path_EQ : Joined<["--"], "ptxas-path=">, Group<i_Group>,
@@ -1315,6 +1317,18 @@ def fopenmp_version_EQ : Joined<["-"], "fopenmp-version=">, Group<f_Group>, Flag
 def fopenmp_EQ : Joined<["-"], "fopenmp=">, Group<f_Group>;
 def fopenmp_use_tls : Flag<["-"], "fopenmp-use-tls">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fnoopenmp_use_tls : Flag<["-"], "fnoopenmp-use-tls">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_nonaliased_maps : Flag<["-"], "fopenmp-nonaliased-maps">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fnoopenmp_nonaliased_maps : Flag<["-"], "fnoopenmp-nonaliased-maps">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fopenmp_combine_dirs : Flag<["-"], "fopenmp-combine-dirs">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fnoopenmp_combine_dirs : Flag<["-"], "fnoopenmp-combine-dirs">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fopenmp_ignore_unmappable_types : Flag<["-"], "fopenmp-ignore-unmappable-types">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fnoopenmp_ignore_unmappable_types : Flag<["-"], "fnoopenmp-ignore-unmappable-types">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_implicit_declare_target : Flag<["-"], "fopenmp-implicit-declare-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fnoopenmp_implicit_declare_target : Flag<["-"], "fnoopenmp-implicit-declare-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_nvptx_spmd : Flag<["-"], "fopenmp-nvptx-spmd">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fopenmp_nvptx_nospmd : Flag<["-"], "fopenmp-nvptx-nospmd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_nvptx_requireruntime : Flag<["-"], "fopenmp-nvptx-requireruntime">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_nvptx_norequireruntime : Flag<["-"], "fopenmp-nvptx-norequireruntime">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fopenmp_targets_EQ : CommaJoined<["-"], "fopenmp-targets=">, Flags<[DriverOption, CC1Option]>,
   HelpText<"Specify comma-separated list of triples OpenMP offloading targets to be supported">;
 def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>, 

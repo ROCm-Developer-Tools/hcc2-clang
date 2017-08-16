@@ -14,6 +14,7 @@
 #ifndef LLVM_CLANG_LIB_BASIC_TARGETS_AMDGPU_H
 #define LLVM_CLANG_LIB_BASIC_TARGETS_AMDGPU_H
 
+#include "clang/Basic/Cuda.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
 #include "llvm/ADT/Triple.h"
@@ -76,9 +77,12 @@ class LLVM_LIBRARY_VISIBILITY AMDGPUTargetInfo final : public TargetInfo {
     return TT.getArch() == llvm::Triple::amdgcn;
   }
 
+  CudaArch GCN_Subarch;
+
   static bool isGenericZero(const llvm::Triple &TT) {
     return TT.getEnvironmentName() == "amdgiz" ||
            TT.getEnvironmentName() == "amdgizcl" ||
+           TT.getOS() == llvm::Triple::CUDA ||
            TT.getEnvironment() == llvm::Triple::HCC;
   }
 
@@ -235,6 +239,7 @@ public:
   // address space has value 0 but in private and local address space has
   // value ~0.
   uint64_t getNullPointerValue(unsigned AS) const override {
+    if(getTriple().getOS()==llvm::Triple::CUDA) return 0;
     return AS == LangAS::opencl_local ? ~0 : 0;
   }
 };

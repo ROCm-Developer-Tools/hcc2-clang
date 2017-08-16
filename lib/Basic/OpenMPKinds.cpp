@@ -138,8 +138,6 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_lastprivate:
   case OMPC_shared:
   case OMPC_reduction:
-  case OMPC_task_reduction:
-  case OMPC_in_reduction:
   case OMPC_aligned:
   case OMPC_copyin:
   case OMPC_copyprivate:
@@ -279,8 +277,6 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_lastprivate:
   case OMPC_shared:
   case OMPC_reduction:
-  case OMPC_task_reduction:
-  case OMPC_in_reduction:
   case OMPC_aligned:
   case OMPC_copyin:
   case OMPC_copyprivate:
@@ -714,16 +710,6 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
       break;
     }
     break;
-  case OMPD_taskgroup:
-    switch (CKind) {
-#define OPENMP_TASKGROUP_CLAUSE(Name)                                          \
-  case OMPC_##Name:                                                            \
-    return true;
-#include "clang/Basic/OpenMPKinds.def"
-    default:
-      break;
-    }
-    break;
   case OMPD_declare_target:
   case OMPD_end_declare_target:
   case OMPD_unknown:
@@ -733,6 +719,7 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
   case OMPD_taskyield:
   case OMPD_barrier:
   case OMPD_taskwait:
+  case OMPD_taskgroup:
   case OMPD_cancellation_point:
   case OMPD_declare_reduction:
     break;
@@ -792,6 +779,7 @@ bool clang::isOpenMPParallelDirective(OpenMPDirectiveKind DKind) {
 }
 
 bool clang::isOpenMPTargetExecutionDirective(OpenMPDirectiveKind DKind) {
+  // TODO add next directives.
   return DKind == OMPD_target || DKind == OMPD_target_parallel ||
          DKind == OMPD_target_parallel_for || 
          DKind == OMPD_target_parallel_for_simd || DKind == OMPD_target_simd ||
@@ -829,6 +817,7 @@ bool clang::isOpenMPSimdDirective(OpenMPDirectiveKind DKind) {
          DKind == OMPD_teams_distribute_simd ||
          DKind == OMPD_teams_distribute_parallel_for_simd ||
          DKind == OMPD_target_teams_distribute_parallel_for_simd ||
+         DKind == OMPD_target_parallel_for_simd ||
          DKind == OMPD_target_teams_distribute_simd;
 }
 
@@ -853,8 +842,7 @@ bool clang::isOpenMPDistributeDirective(OpenMPDirectiveKind Kind) {
 bool clang::isOpenMPPrivate(OpenMPClauseKind Kind) {
   return Kind == OMPC_private || Kind == OMPC_firstprivate ||
          Kind == OMPC_lastprivate || Kind == OMPC_linear ||
-         Kind == OMPC_reduction || Kind == OMPC_task_reduction ||
-         Kind == OMPC_in_reduction; // TODO add next clauses like 'reduction'.
+         Kind == OMPC_reduction; // TODO add next clauses like 'reduction'.
 }
 
 bool clang::isOpenMPThreadPrivate(OpenMPClauseKind Kind) {
@@ -868,11 +856,14 @@ bool clang::isOpenMPTaskingDirective(OpenMPDirectiveKind Kind) {
 bool clang::isOpenMPLoopBoundSharingDirective(OpenMPDirectiveKind Kind) {
   return Kind == OMPD_distribute_parallel_for ||
          Kind == OMPD_distribute_parallel_for_simd ||
+         Kind == OMPD_distribute_simd || Kind == OMPD_teams_distribute_simd ||
          Kind == OMPD_teams_distribute_parallel_for_simd ||
          Kind == OMPD_teams_distribute_parallel_for ||
          Kind == OMPD_target_teams_distribute_parallel_for ||
-         Kind == OMPD_target_teams_distribute_parallel_for_simd;
+         Kind == OMPD_target_teams_distribute_parallel_for_simd ||
+         Kind == OMPD_target_teams_distribute_simd;
 }
+
 
 void clang::getOpenMPCaptureRegions(
     SmallVectorImpl<OpenMPDirectiveKind> &CaptureRegions,
@@ -945,4 +936,11 @@ void clang::getOpenMPCaptureRegions(
   case OMPD_unknown:
     llvm_unreachable("Unknown OpenMP directive");
   }
+}
+
+bool clang::requiresAdditionalIterationVar(OpenMPDirectiveKind DKind) {
+  return DKind == OMPD_distribute_simd || DKind == OMPD_teams_distribute_simd ||
+         DKind == OMPD_target_teams_distribute_simd ||
+         DKind == OMPD_teams_distribute_parallel_for_simd;
+  // TODO add more directives if we detect any other cases.
 }

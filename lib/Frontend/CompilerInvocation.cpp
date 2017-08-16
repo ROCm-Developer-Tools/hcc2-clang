@@ -545,6 +545,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     OPT_fuse_register_sized_bitfield_access);
   Opts.RelaxedAliasing = Args.hasArg(OPT_relaxed_aliasing);
   Opts.StructPathTBAA = !Args.hasArg(OPT_no_struct_path_tbaa);
+  Opts.OpenmpCombineDirs = Args.hasArg(OPT_fopenmp_combine_dirs);
+  Opts.OpenmpNonaliasedMaps = Args.hasArg(OPT_fopenmp_nonaliased_maps);
+  Opts.OpenMPRequireGPURuntime = Args.hasArg(OPT_fopenmp_nvptx_requireruntime);
   Opts.DwarfDebugFlags = Args.getLastArgValue(OPT_dwarf_debug_flags);
   Opts.MergeAllConstants = !Args.hasArg(OPT_fno_merge_all_constants);
   Opts.NoCommon = Args.hasArg(OPT_fno_common);
@@ -1740,6 +1743,11 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.NativeHalfArgsAndReturns = 1;
   }
 
+  if (Opts.CPlusPlusAMP) {
+    Opts.NativeHalfType = 1;
+    Opts.NativeHalfArgsAndReturns = 1;
+  }
+
   // OpenCL and C++ both have bool, true, false keywords.
   Opts.Bool = Opts.OpenCL || Opts.CPlusPlus;
 
@@ -2301,12 +2309,22 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     }
   }
 
-  // Check if -fopenmp is specified.
-  Opts.OpenMP = Args.hasArg(options::OPT_fopenmp) ? 1 : 0;
+  // Check if -fopenmp is specified. We use version 4.5 by default.
+  Opts.OpenMP = Args.hasArg(options::OPT_fopenmp) ? 45 : 0;
   Opts.OpenMPUseTLS =
       Opts.OpenMP && !Args.hasArg(options::OPT_fnoopenmp_use_tls);
   Opts.OpenMPIsDevice =
       Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_is_device);
+  Opts.OpenMPNonAliasedMaps =
+      Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_nonaliased_maps);
+  Opts.OpenMPCombineDirs =
+      Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_combine_dirs);
+  Opts.OpenMPIgnoreUnmappableTypes =
+      Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_ignore_unmappable_types);
+  Opts.OpenMPNoSPMD =
+      Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_nvptx_nospmd);
+  Opts.OpenMPImplicitDeclareTarget =
+      Opts.OpenMP && Args.hasArg(options::OPT_fopenmp_implicit_declare_target);
 
   if (Opts.OpenMP) {
     int Version =
@@ -2320,13 +2338,26 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       default:
         break;
       // Add unsupported host targets here:
+      /*
       case llvm::Triple::nvptx:
       case llvm::Triple::nvptx64:
         Diags.Report(clang::diag::err_drv_omp_host_target_not_supported)
             << TargetOpts.Triple;
         break;
+      */
       }
     }
+    // Set the flag to prevent the implementation from emitting device exception
+    // handling code for those requiring so.
+    // FIXME:  I think we need this for cuda and HCC devices
+    if (Opts.OpenMPIsDevice && (T.getArch() == llvm::Triple::nvptx ||
+                                T.getArch() == llvm::Triple::amdgcn ||
+                                T.getArch() == llvm::Triple::nvptx64)) {
+      Opts.Exceptions = 0;
+      Opts.CXXExceptions = 0;
+      Opts.OpenMPNoDeviceEH = 1;
+    } else
+      Opts.OpenMPNoDeviceEH = 0;
   }
 
   // Get the OpenMP target triples if any.
@@ -2350,6 +2381,19 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       Diags.Report(clang::diag::err_drv_omp_host_ir_file_not_found)
           << Opts.OMPHostIRFile;
   }
+
+  // C++ AMP: Decide host path or device path
+  Opts.DevicePath = Args.hasArg(OPT_famp_is_device);
+  Opts.AMPCPU = Args.hasArg(OPT_famp_cpu);
+  Opts.HSAExtension = Args.hasArg(OPT_fhsa_extension);
+
+  // rules for auto-auto:
+  // disabled by default, or explicitly disabled by -fno-auto-auto
+  // enabled by -fauto-auto
+  Opts.AutoAuto = Args.hasArg(OPT_fauto_auto) && !Args.hasArg(OPT_fno_auto_auto);
+
+  // rules for auto-compile-for-accelerator:
+  Opts.AutoCompileForAccelerator = Args.hasArg(OPT_fauto_compile_for_accelerator);
 
   // C++ AMP: Decide host path or device path
   Opts.DevicePath = Args.hasArg(OPT_famp_is_device);
@@ -2698,6 +2742,18 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
     }
   }
+
+  if (LangOpts.CPlusPlusAMP) {
+    // During HCC device-side compilation, the aux triple is the
+    // triple used for host compilation
+    if (LangOpts.DevicePath) {
+      Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
+    }
+  }
+
+  // Set the the triple of the host for OpenMP device compile.
+  if (LangOpts.OpenMPIsDevice)
+    Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
 
   // FIXME: Override value name discarding when asan or msan is used because the
   // backend passes depend on the name of the alloca in order to print out

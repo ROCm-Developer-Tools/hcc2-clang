@@ -41,6 +41,15 @@ enum class CudaArch {
   SM_60,
   SM_61,
   SM_62,
+  GFX700,
+  GFX701,
+  GFX800,
+  GFX801,
+  GFX802,
+  GFX803,
+  GFX810,
+  GFX900,
+  GFX901,
 };
 const char *CudaArchToString(CudaArch A);
 
@@ -60,6 +69,7 @@ enum class CudaVirtualArch {
   COMPUTE_60,
   COMPUTE_61,
   COMPUTE_62,
+  COMPUTE_GCN,
 };
 const char *CudaVirtualArchToString(CudaVirtualArch A);
 

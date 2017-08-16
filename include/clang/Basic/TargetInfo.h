@@ -15,6 +15,7 @@
 #ifndef LLVM_CLANG_BASIC_TARGETINFO_H
 #define LLVM_CLANG_BASIC_TARGETINFO_H
 
+#include "clang/Basic/GpuGridValues.h"
 #include "clang/Basic/AddressSpaces.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/Specifiers.h"
@@ -86,6 +87,8 @@ protected:
   unsigned char RegParmMax, SSERegParmMax;
   TargetCXXABI TheCXXABI;
   const LangAS::Map *AddrSpaceMap;
+  const int * GridValues;
+  const long long int * LongGridValues;
 
   mutable StringRef PlatformName;
   mutable VersionTuple PlatformMinVersion;
@@ -977,6 +980,14 @@ public:
   /// this may return None, and such optimizations will be disabled.
   virtual llvm::Optional<unsigned> getConstantAddressSpace() const {
     return LangAS::Default;
+  }
+
+  int getGridValue(GPU::GVIDX gv)  const {
+    return GridValues[gv];
+  }
+
+  long long getLongGridValue(GPU::GVLIDX gv)  const {
+    return LongGridValues[gv];
   }
 
   /// \brief Retrieve the name of the platform as it is used in the

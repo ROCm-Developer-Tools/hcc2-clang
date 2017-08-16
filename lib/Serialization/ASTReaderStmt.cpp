@@ -1851,12 +1851,14 @@ OMPClause *OMPClauseReader::readClause() {
   case OMPC_reduction:
     C = OMPReductionClause::CreateEmpty(Context, Reader->Record.readInt());
     break;
+#if 0
   case OMPC_task_reduction:
     C = OMPTaskReductionClause::CreateEmpty(Context, Reader->Record.readInt());
     break;
   case OMPC_in_reduction:
     C = OMPInReductionClause::CreateEmpty(Context, Reader->Record.readInt());
     break;
+#endif
   case OMPC_linear:
     C = OMPLinearClause::CreateEmpty(Context, Reader->Record.readInt());
     break;
@@ -2161,6 +2163,7 @@ void OMPClauseReader::VisitOMPReductionClause(OMPReductionClause *C) {
   C->setReductionOps(Vars);
 }
 
+#if 0
 void OMPClauseReader::VisitOMPTaskReductionClause(OMPTaskReductionClause *C) {
   VisitOMPClauseWithPostUpdate(C);
   C->setLParenLoc(Reader->ReadSourceLocation());
@@ -2232,6 +2235,7 @@ void OMPClauseReader::VisitOMPInReductionClause(OMPInReductionClause *C) {
     Vars.push_back(Reader->Record.readSubExpr());
   C->setTaskgroupDescriptors(Vars);
 }
+#endif
 
 void OMPClauseReader::VisitOMPLinearClause(OMPLinearClause *C) {
   VisitOMPClauseWithPostUpdate(C);
@@ -2654,6 +2658,8 @@ void ASTStmtReader::VisitOMPLoopDirective(OMPLoopDirective *D) {
   D->setPreCond(Record.readSubExpr());
   D->setCond(Record.readSubExpr());
   D->setInit(Record.readSubExpr());
+  D->setLaneInit(Record.readSubExpr());
+  D->setNumLanes(Record.readSubExpr());
   D->setInc(Record.readSubExpr());
   D->setPreInits(Record.readSubStmt());
   if (isOpenMPWorksharingDirective(D->getDirectiveKind()) ||
@@ -2666,20 +2672,13 @@ void ASTStmtReader::VisitOMPLoopDirective(OMPLoopDirective *D) {
     D->setEnsureUpperBound(Record.readSubExpr());
     D->setNextLowerBound(Record.readSubExpr());
     D->setNextUpperBound(Record.readSubExpr());
-    D->setNumIterations(Record.readSubExpr());
-  }
-  if (isOpenMPLoopBoundSharingDirective(D->getDirectiveKind())) {
     D->setPrevLowerBoundVariable(Record.readSubExpr());
     D->setPrevUpperBoundVariable(Record.readSubExpr());
+    D->setDistCond(Record.readSubExpr());
     D->setDistInc(Record.readSubExpr());
     D->setPrevEnsureUpperBound(Record.readSubExpr());
-    D->setCombinedLowerBoundVariable(Record.readSubExpr());
-    D->setCombinedUpperBoundVariable(Record.readSubExpr());
-    D->setCombinedEnsureUpperBound(Record.readSubExpr());
-    D->setCombinedInit(Record.readSubExpr());
-    D->setCombinedCond(Record.readSubExpr());
-    D->setCombinedNextLowerBound(Record.readSubExpr());
-    D->setCombinedNextUpperBound(Record.readSubExpr());
+    D->setInnermostIterationVariable(Record.readSubExpr());
+    D->setNumIterations(Record.readSubExpr());
   }
   SmallVector<Expr *, 4> Sub;
   unsigned CollapsedNum = D->getCollapsedNumber();
@@ -2807,7 +2806,9 @@ void ASTStmtReader::VisitOMPTaskgroupDirective(OMPTaskgroupDirective *D) {
   // The NumClauses field was read in ReadStmtFromStream.
   Record.skipInts(1);
   VisitOMPExecutableDirective(D);
+#if 0
   D->setReductionRef(Record.readSubExpr());
+#endif
 }
 
 void ASTStmtReader::VisitOMPFlushDirective(OMPFlushDirective *D) {
@@ -3577,8 +3578,11 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       break;
 
     case STMT_OMP_TASKGROUP_DIRECTIVE:
+#if 0
       S = OMPTaskgroupDirective::CreateEmpty(
           Context, Record[ASTStmtReader::NumStmtFields], Empty);
+#endif
+      S = OMPTaskgroupDirective::CreateEmpty(Context, Empty);
       break;
 
     case STMT_OMP_FLUSH_DIRECTIVE:

@@ -425,6 +425,23 @@ CodeGenTypes::arrangeFunctionDeclaration(const FunctionDecl *FD) {
 
   assert(isa<FunctionType>(FTy));
 
+  if ((getContext().getTargetInfo().getTriple().getArch() == llvm::Triple::amdgcn)
+      && FD->hasAttr<CUDAGlobalAttr>()) {
+    SmallVector<CanQualType, 16> argCanQualTypes;
+    for (ParmVarDecl * Arg : FD->parameters()) {
+      if (Arg->getType().getTypePtr()->isPointerType()) {
+        Arg->setType(getContext().getAddrSpaceQualType(
+          Arg->getType(),LangAS::cuda_device));
+        argCanQualTypes.push_back(CanQualType::CreateUnsafe(
+          getContext().getAddrSpaceQualType( getContext().getCanonicalParamType(Arg->getType()),
+          LangAS::cuda_device)));
+      } else
+        argCanQualTypes.push_back(getContext().getCanonicalParamType(Arg->getType()));
+    }
+    return arrangeLLVMFunctionInfo( getContext().VoidTy, false,
+      false, argCanQualTypes, FunctionType::ExtInfo(), {}, RequiredArgs::All);
+  }
+
   // When declaring a function without a prototype, always use a
   // non-variadic type.
   if (CanQual<FunctionNoProtoType> noProto = FTy.getAs<FunctionNoProtoType>()) {
@@ -724,8 +741,14 @@ CodeGenTypes::arrangeLLVMFunctionInfo(CanQualType resultType,
                                       FunctionType::ExtInfo info,
                      ArrayRef<FunctionProtoType::ExtParameterInfo> paramInfos,
                                       RequiredArgs required) {
-  assert(std::all_of(argTypes.begin(), argTypes.end(),
-                     [](CanQualType T) { return T.isCanonicalAsParam(); }));
+  // All args should be cannonical except for address space qual 
+  assert(std::all_of( argTypes.begin(), argTypes.end(),
+    [&](CanQualType QT){
+      Qualifiers qs = QT.getQualifiers();
+      qs.removeAddressSpace();
+      return (QualType(QT.getTypePtr(), qs.getAsOpaqueValue()).isCanonicalAsParam());
+    }
+  ));
 
   // Lookup or create unique function info.
   llvm::FoldingSetNodeID ID;
@@ -1758,7 +1781,8 @@ void CodeGenModule::ConstructDefaultFnAttrList(StringRef Name, bool HasOptnone,
     FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
 
     // Respect -fcuda-flush-denormals-to-zero.
-    if (getLangOpts().CUDADeviceFlushDenormalsToZero)
+    if (getLangOpts().CUDADeviceFlushDenormalsToZero &&
+    (getContext().getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn))
       FuncAttrs.addAttribute("nvptx-f32ftz", "true");
   }
 }
@@ -2389,6 +2413,12 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
         // type in the function type. Since we are codegening the callee
         // in here, add a cast to the argument type.
         llvm::Type *LTy = ConvertType(Arg->getType());
+
+        if ( (V->getType() != LTy) &&
+             (V->getType()->getPointerAddressSpace() !=
+               LTy->getPointerAddressSpace()) )
+          V = Builder.CreateAddrSpaceCast(V, LTy);
+
         if (V->getType() != LTy) {
           if (V->getType()->isIntegerTy(1))
             V = Builder.CreateZExt(V, LTy);
@@ -3922,6 +3952,16 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
             V->getType() != IRFuncTy->getParamType(FirstIRArg))
           V = Builder.CreatePointerBitCastOrAddrSpaceCast(V, IRFuncTy->getParamType(FirstIRArg));
 
+        // If the argument doesn't match, perform a bitcast to coerce it.  This
+        // can happen due to trivial type mismatches.
+        if (FirstIRArg < IRFuncTy->getNumParams() &&
+            V->getType() != IRFuncTy->getParamType(FirstIRArg)) {
+          if (CGM.getTriple().getArch() == llvm::Triple::amdgcn &&
+            CGM.getLangOpts().OpenMPIsDevice && V->getType()->isPtrOrPtrVectorTy()) {
+            V = Builder.CreatePointerBitCastOrAddrSpaceCast(V, IRFuncTy->getParamType(FirstIRArg));
+          } else
+          V = Builder.CreateBitCast(V, IRFuncTy->getParamType(FirstIRArg));
+        }
         IRCallArgs[FirstIRArg] = V;
         break;
       }

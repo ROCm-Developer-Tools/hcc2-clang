@@ -125,9 +125,21 @@ forAllAssociatedToolChains(Compilation &C, const JobAction &JA,
 
   // Apply Work on all the offloading tool chains associated with the current
   // action.
-  if (JA.isHostOffloading(Action::OFK_Cuda))
+  if (JA.isHostOffloading(Action::OFK_Cuda)) {
     Work(*C.getSingleOffloadToolChain<Action::OFK_Cuda>());
-  else if (JA.isDeviceOffloading(Action::OFK_Cuda))
+    return;
+  } else if (JA.isDeviceOffloading(Action::OFK_Cuda))
+    Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
+
+  if (JA.isHostOffloading(Action::OFK_OpenMP)) {
+    Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
+    return;
+  } else if (JA.isDeviceOffloading(Action::OFK_OpenMP))
+      Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
+
+  if (JA.isHostOffloading(Action::OFK_HCC))
+    Work(*C.getSingleOffloadToolChain<Action::OFK_HCC>());
+  else if (JA.isDeviceOffloading(Action::OFK_HCC))
     Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
 
   if (JA.isHostOffloading(Action::OFK_HCC))
@@ -1958,8 +1970,16 @@ static bool IsHCAcceleratorPreprocessJobActionWithInputType(const JobAction* A, 
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
+
   const llvm::Triple &Triple = getToolChain().getEffectiveTriple();
-  const std::string &TripleStr = Triple.getTriple();
+  bool Is_amdgcn = StringRef(JA.getOffloadingArch()).startswith("gfx") ||
+               (getToolChain().getArch() == llvm::Triple::amdgcn) ;
+
+  // Currently cuda and openmp drivers only support offload triple nvptx64-nvidia-cuda
+  // We switch that here from nvptx to amdgcn iff the subarch is a gfx processor.
+  const std::string &TripleStr = Is_amdgcn &&
+     (JA.isOffloading(Action::OFK_Cuda) || JA.isOffloading(Action::OFK_OpenMP))
+    ?  "amdgcn--cuda" : Triple.getTriple();
 
   bool KernelOrKext =
       Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
@@ -2040,6 +2060,49 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-D__AMP_CPU__=1");
     CmdArgs.push_back("-D__KALMAR_CPU__=2");
     CmdArgs.push_back("-D__HCC_CPU__=2");
+  } else if ( !JA.isOffloading(Action::OFK_Cuda) &&
+    !JA.isOffloading(Action::OFK_OpenMP)) {
+
+    // path to compile host codes, while kernel codes are to be compiled on GPU
+    CmdArgs.push_back("-D__KALMAR_CPU__=1");
+    CmdArgs.push_back("-D__HCC_CPU__=1");
+  }
+
+  // add HCC macros, based on compiler modes
+  if (Args.hasArg(options::OPT_hc_mode)) {
+    CmdArgs.push_back("-D__KALMAR_HC__=1");
+    CmdArgs.push_back("-D__HCC_HC__=1");
+  } else if (D.IsCXXAMP(Args)) {
+    CmdArgs.push_back("-D__KALMAR_AMP__=1");
+    CmdArgs.push_back("-D__HCC_AMP__=1");
+  }
+
+  // C++ AMP-specific
+  if (IsCXXAMPBackendJobAction(&JA) ||
+      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_HC_KERNEL) ||
+      IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP)) {
+    // path to compile kernel codes on GPU
+    CmdArgs.push_back("-D__GPU__=1");
+    CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=1");
+    CmdArgs.push_back("-D__HCC_ACCELERATOR__=1");
+    CmdArgs.push_back("-famp-is-device");
+    CmdArgs.push_back("-fno-builtin");
+    CmdArgs.push_back("-fno-common");
+    //CmdArgs.push_back("-m32"); // added below using -triple
+    CmdArgs.push_back("-O2");
+  } else if(IsCXXAMPCPUBackendJobAction(&JA) ||
+    IsHCAcceleratorPreprocessJobActionWithInputType(&JA, types::TY_CXX_AMP_CPU)){
+    // path to compile kernel codes on CPU
+    CmdArgs.push_back("-famp-is-device");
+    CmdArgs.push_back("-famp-cpu");
+    CmdArgs.push_back("-D__AMP_CPU__=1");
+    CmdArgs.push_back("-D__KALMAR_ACCELERATOR__=2");
+    CmdArgs.push_back("-D__HCC_ACCELERATOR__=2");
+  } else if (Args.hasArg(options::OPT_cxxamp_cpu_mode)) {
+    // path to compile host codes, while kernel codes are to be compiled on CPU
+    CmdArgs.push_back("-D__AMP_CPU__=1");
+    CmdArgs.push_back("-D__KALMAR_CPU__=2");
+    CmdArgs.push_back("-D__HCC_CPU__=2");
   } else {
     // path to compile host codes, while kernel codes are to be compiled on GPU
     CmdArgs.push_back("-D__KALMAR_CPU__=1");
@@ -2068,6 +2131,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                              ->getTriple()
                              .normalize();
 
+    CmdArgs.push_back("-aux-triple");
+    CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
+  }
+
+  if (IsOpenMPDevice) {
+    // We have to pass the triple of the host if compiling for an OpenMP device.
+    std::string NormalizedTriple =
+        C.getSingleOffloadToolChain<Action::OFK_Host>()
+            ->getTriple()
+            .normalize();
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
   }
@@ -2622,8 +2695,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // a linker bug (see <rdar://problem/7651567>), and CUDA device code, where
   // aliases aren't supported.
   if (!getToolChain().getTriple().isOSDarwin() &&
-      !getToolChain().getTriple().isNVPTX())
+      !Is_amdgcn && !getToolChain().getTriple().isGpu())
     CmdArgs.push_back("-mconstructor-aliases");
+
+  // FIXME: Termporarily disble lifetime markers till AS-specific allocas work. 
+  if (Is_amdgcn) CmdArgs.push_back("-disable-lifetime-markers");
 
   // Darwin's kernel doesn't support guard variables; just die if we
   // try to use them.
@@ -2843,6 +2919,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
   }
 
+  // disable debun outpt for HCC kernel path
+  if (!IsHCCKernelPath) {
+
   // Only allow debug lines output for HCC kernel path,
   // disable other debug info until it's fully supported
   if (!IsHCCKernelPath ||
@@ -2940,6 +3019,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-arange-section");
   }
+  
+  } // if (!IsHCCKernelPath)
 
   if (Args.hasFlag(options::OPT_fdebug_types_section,
                    options::OPT_fno_debug_types_section, false)) {
@@ -3437,7 +3518,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   unsigned StackProtectorLevel = 0;
   // NVPTX doesn't support stack protectors; from the compiler's perspective, it
   // doesn't even have a stack!
-  if (!Triple.isNVPTX()) {
+  if (!Triple.isGpu()) {
     if (Arg *A = Args.getLastArg(options::OPT_fno_stack_protector,
                                  options::OPT_fstack_protector_all,
                                  options::OPT_fstack_protector_strong,
@@ -4256,7 +4337,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-gnu-inline-asm");
 
   // Turn off vectorization support for GPU kernels for now
-  if (!IsHCCKernelPath) {
+  if (!IsHCCKernelPath && !Is_amdgcn) {
 
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
@@ -4460,7 +4541,22 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (StringRef(A->getValue(0)) == "-disable-llvm-optzns") {
       CmdArgs.push_back("-disable-llvm-optzns");
     } else {
-      A->render(Args, CmdArgs);
+      // C++ AMP-specific
+      if (IsCXXAMPBackendJobAction(&JA)) {
+        // ignore -O0 and -O1 for GPU compilation paths
+        // because inliner would not be enabled and will cause compilation fail
+        if (A->getOption().matches(options::OPT_O0)) {
+          D.Diag(diag::warn_drv_O0_ignored_for_GPU);
+        } else if (A->containsValue("1")) {
+          D.Diag(diag::warn_drv_O1_ignored_for_GPU);
+        } else {
+          // let all other optimization levels pass
+          A->render(Args, CmdArgs);
+        }
+      } else {
+        // normal cases
+        A->render(Args, CmdArgs);
+      }
     }
   }
 
@@ -4491,6 +4587,30 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       llvm::sys::path::replace_extension(KernelPreprocessFile, ".gpu.i");
     }
     CmdArgs.push_back(Args.MakeArgString(KernelPreprocessFile));
+  } else if (getenv("EXTRAINFER") && Output.isFilename() &&
+      !isa<PreprocessJobAction>(JA) &&
+      (((JA.isOffloading(Action::OFK_Cuda) && types::isLLVMIR(Input.getType()))) ||
+       JA.isOffloading(Action::OFK_OpenMP)) && Is_amdgcn) {
+
+    /*
+       llvm::errs() << "Input Type: " << InputType << "\n";
+       llvm::errs() << "Output type: " << Output.getType() << "\n";
+       llvm::errs() << "JA type: " << JA.getType() << "\n";
+
+       llvm::errs() << "TY_PP_Asm: " << types::TY_PP_Asm << "\n";
+       llvm::errs() << "types::TY_LLVM_IR: " << types::TY_LLVM_IR << "\n";
+       llvm::errs() << "types::TY_LLVM_BC: " << types::TY_LLVM_BC << "\n";
+       */
+
+    SmallString<128> KernelPostprocessFile(Output.getFilename());
+
+    if (JA.getType() == types::TY_LLVM_IR)
+      llvm::sys::path::replace_extension(KernelPostprocessFile, ".p.ll");
+    else
+      llvm::sys::path::replace_extension(KernelPostprocessFile, ".p.bc");
+
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Args.MakeArgString(KernelPostprocessFile));
   } else if (Output.isFilename()) {
     CmdArgs.push_back("-o");
     CmdArgs.push_back(Output.getFilename());
@@ -4644,6 +4764,62 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Disable warnings for clang -E -emit-llvm foo.c
   Args.ClaimAllArgs(options::OPT_emit_llvm);
+
+  if (Output.getType() == types::TY_Dependencies) {
+  } else if (getenv("EXTRAINFER") && Output.isFilename() &&
+      !isa<PreprocessJobAction>(JA) &&
+      (((JA.isOffloading(Action::OFK_Cuda) && types::isLLVMIR(Input.getType()))) ||
+       JA.isOffloading(Action::OFK_OpenMP)) && Is_amdgcn) {
+
+    /*
+       llvm::errs() << "Input Type: " << InputType << "\n";
+       llvm::errs() << "Output type: " << Output.getType() << "\n";
+       llvm::errs() << "JA type: " << JA.getType() << "\n";
+
+       llvm::errs() << "TY_PP_Asm: " << types::TY_PP_Asm << "\n";
+       llvm::errs() << "types::TY_LLVM_IR: " << types::TY_LLVM_IR << "\n";
+       llvm::errs() << "types::TY_LLVM_BC: " << types::TY_LLVM_BC << "\n";
+       */
+
+    SmallString<128> KernelPostprocessFile(Output.getFilename());
+
+    if (JA.getType() == types::TY_LLVM_IR)
+      llvm::sys::path::replace_extension(KernelPostprocessFile, ".p.ll");
+    else
+      llvm::sys::path::replace_extension(KernelPostprocessFile, ".p.bc");
+
+    //llvm::errs() << "Adding post processing for: " << KernelPostprocessFile << "\n";
+
+    std::string GFXNAME = JA.getOffloadingArch();
+
+    ArgStringList OptArgs;
+    // The input to opt is the output from clang
+    OptArgs.push_back(Args.MakeArgString(KernelPostprocessFile));
+
+    // Add CLANG_TARGETOPT_OPTS override options to opt
+    if (getenv("CUDA_CLANG_OPT_OPTS"))
+      addEnvListWithSpaces(Args, OptArgs, "CUDA_CLANG_OPT_OPTS");
+    else {
+      OptArgs.push_back(Args.MakeArgString("-O2"));
+      const char *mcpustr = Args.MakeArgString("-mcpu=" + GFXNAME);
+      OptArgs.push_back(mcpustr);
+      OptArgs.push_back("-dce");
+      OptArgs.push_back("-sroa");
+      OptArgs.push_back("-globaldce");
+    }
+
+    if (Output.getType() == types::TY_LLVM_IR)
+      OptArgs.push_back("-S");
+
+    OptArgs.push_back("-o");
+    OptArgs.push_back(Output.getFilename());
+    const char *OptExec = Args.MakeArgString(C.getDriver().Dir + "/opt");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, OptExec, OptArgs, Inputs ));
+
+    if (!C.getDriver().isSaveTempsEnabled())
+      C.addTempFile(Args.MakeArgString(KernelPostprocessFile));
+
+  }
 }
 
 Clang::Clang(const ToolChain &TC)

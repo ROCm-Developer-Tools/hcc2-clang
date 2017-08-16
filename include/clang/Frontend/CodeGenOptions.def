@@ -28,6 +28,9 @@ CODEGENOPT(Name, Bits, Default)
 CODEGENOPT(Name, Bits, Default)
 #endif
 
+CODEGENOPT(OpenmpCombineDirs, 1, 0) ///< Whether or not to combine openmp directives aggressively.
+CODEGENOPT(OpenmpNonaliasedMaps, 1, 0) ///< Whether or not to add noalias to parameters of map outlining.
+CODEGENOPT(OpenMPRequireGPURuntime, 1, 0) ///< Do not optimize out the OpenMP runtime on the NVPTX target device.
 CODEGENOPT(DisableIntegratedAS, 1, 0) ///< -no-integrated-as
 ENUM_CODEGENOPT(CompressDebugSections, llvm::DebugCompressionType, 2,
                 llvm::DebugCompressionType::None)

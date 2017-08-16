@@ -199,6 +199,7 @@ void CodeGenModule::createOpenMPRuntime() {
   // Select a specialized code generation class based on the target, if any.
   // If it does not exist use the default implementation.
   switch (getTriple().getArch()) {
+  case llvm::Triple::amdgcn:
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
     assert(getLangOpts().OpenMPIsDevice &&
@@ -243,6 +244,12 @@ void CodeGenModule::applyReplacements() {
       }
     }
 
+    // Tell the OpenMP runtime we are replacing a global that can potentially be
+    // marked "declare target".
+    if (OpenMPRuntime)
+      if (auto *NewGV = dyn_cast<llvm::GlobalValue>(Replacement))
+        OpenMPRuntime->registerGlobalReplacement(MangledName, NewGV);
+
     // Replace old with new, but keep the old order.
     OldF->replaceAllUsesWith(Replacement);
     if (NewF) {
@@ -265,6 +272,12 @@ void CodeGenModule::applyGlobalValReplacements() {
 
     GV->replaceAllUsesWith(C);
     GV->eraseFromParent();
+
+    // Tell the OpenMP runtime we are replacing a global that can potentially be
+    // marked "declare target".
+    if (OpenMPRuntime)
+      if (auto *NewGV = dyn_cast<llvm::GlobalValue>(C))
+        OpenMPRuntime->registerGlobalReplacement(GV->getName(), NewGV);
   }
 }
 
@@ -912,7 +925,7 @@ void CodeGenModule::SetLLVMFunctionAttributes(const Decl *D,
       B.addAttribute("hc_grid_launch");
       B.addAttribute(llvm::Attribute::NoInline);
     }
-    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
+    F->addAttributes(llvm::AttributeList::FunctionIndex,B);
   }
 }
 
@@ -958,8 +971,11 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     // explicitly marked as alwaysinline for semantic reasons, and inlining is
     // disabled, mark the function as noinline.
     if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
-        CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining)
-      B.addAttribute(llvm::Attribute::NoInline);
+        CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining) {
+      // In case of AMDGCN, do not mark as noinline by default
+      if (Context.getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn)
+        B.addAttribute(llvm::Attribute::NoInline);
+    }
 
     F->addAttributes(llvm::AttributeList::FunctionIndex, B);
     return;
@@ -978,7 +994,9 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     B.addAttribute(llvm::Attribute::OptimizeNone);
 
     // OptimizeNone implies noinline; we should not be inlining such functions.
-    B.addAttribute(llvm::Attribute::NoInline);
+    // In case of AMDGCN, do not mark as noinline by default
+    if (Context.getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn)
+      B.addAttribute(llvm::Attribute::NoInline);
     assert(!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
            "OptimizeNone and AlwaysInline on same function!");
 
@@ -993,7 +1011,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   } else if (D->hasAttr<NakedAttr>()) {
     // Naked implies noinline: we should not be inlining such functions.
     B.addAttribute(llvm::Attribute::Naked);
-    B.addAttribute(llvm::Attribute::NoInline);
+    if (Context.getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn)
+      B.addAttribute(llvm::Attribute::NoInline);
   } else if (D->hasAttr<NoDuplicateAttr>()) {
     B.addAttribute(llvm::Attribute::NoDuplicate);
   } else if (D->hasAttr<NoInlineAttr>()) {
@@ -1006,7 +1025,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     // If we're not inlining, then force everything that isn't always_inline to
     // carry an explicit noinline attribute.
     if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline))
-      B.addAttribute(llvm::Attribute::NoInline);
+      if (Context.getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn)
+        B.addAttribute(llvm::Attribute::NoInline);
   } else {
     // Otherwise, propagate the inline hint attribute and potentially use its
     // absence to mark things as noinline.
@@ -1019,7 +1039,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
                      CodeGenOptions::OnlyHintInlining &&
                  !FD->isInlined() &&
                  !F->hasFnAttribute(llvm::Attribute::AlwaysInline)) {
-        B.addAttribute(llvm::Attribute::NoInline);
+        if (Context.getTargetInfo().getTriple().getArch()!=llvm::Triple::amdgcn)
+          B.addAttribute(llvm::Attribute::NoInline);
       }
     }
   }
@@ -1213,6 +1234,18 @@ void CodeGenModule::SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
 
   if (const SectionAttr *SA = FD->getAttr<SectionAttr>())
     F->setSection(SA->getName());
+
+  // Prevent barrier functions be duplicated
+  // Set C++AMP kernels carry AMDGPU_KERNEL calling convention
+  if (getLangOpts().OpenCL ||
+      (getLangOpts().CPlusPlusAMP && CodeGenOpts.AMPIsDevice)) {
+      if (F->getName()=="amp_barrier") {
+          F->addFnAttr(llvm::Attribute::NoDuplicate);
+          F->addFnAttr(llvm::Attribute::NoUnwind);
+      }
+      if (FD->hasAttr<OpenCLKernelAttr>())
+          F->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
+  }
 
   // Prevent barrier functions be duplicated
   // Set C++AMP kernels carry AMDGPU_KERNEL calling convention
@@ -1435,16 +1468,22 @@ void CodeGenModule::EmitDeferred() {
     assert(DeferredVTables.empty());
   }
 
+  if (LangOpts.OpenMP && !LangOpts.OpenMPIsDevice) {
+    OpenMPRuntime->registerTrackedFunction();
+  }
+
   // Stop if we're out of both deferred vtables and deferred declarations.
   if (DeferredDeclsToEmit.empty())
     return;
 
   // Grab the list of decls to emit. If EmitGlobalDefinition schedules more
   // work, it will not interfere with this.
-  std::vector<GlobalDecl> CurDeclsToEmit;
+  std::vector<DeferredGlobal> CurDeclsToEmit;
   CurDeclsToEmit.swap(DeferredDeclsToEmit);
 
-  for (GlobalDecl &D : CurDeclsToEmit) {
+  for (DeferredGlobal &G : CurDeclsToEmit) {
+     GlobalDecl D = G.GD; 
+
     // We should call GetAddrOfGlobal with IsForDefinition set to true in order
     // to get GlobalValue with exactly the type we need, not something that
     // might had been created for another decl with the same mangled name but
@@ -1460,6 +1499,8 @@ void CodeGenModule::EmitDeferred() {
 
     // Make sure GetGlobalValue returned non-null.
     assert(GV);
+
+    // Should we assert G.GV == GV here?
 
     // Check to see if we've already emitted this.  This is necessary
     // for a couple of reasons: first, decls can end up in the
@@ -1655,6 +1696,11 @@ bool CodeGenModule::MustBeEmitted(const ValueDecl *Global) {
   if (LangOpts.EmitAllDecls)
     return true;
 
+  // In OpenMP device mode all declarations that were not filtered should be
+  // emitted.
+  if (LangOpts.OpenMPIsDevice)
+    return true;
+
   return getContext().DeclMustBeEmitted(Global);
 }
 
@@ -1778,6 +1824,21 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   }
 
   if (LangOpts.OpenMP) {
+    if (LangOpts.OpenMPIsDevice) {
+      if (const auto *FD = dyn_cast<FunctionDecl>(Global))
+        if (FD->isThisDeclarationADefinition()) {
+          if (OpenMPRuntime->MustBeEmittedForDevice(GD)) {
+            EmitGlobalDefinition(GD);
+            return;
+          }
+        }
+    }
+
+    if (getLangOpts().OpenMPImplicitDeclareTarget && !LangOpts.OpenMPIsDevice) {
+      StringRef MangledName = getMangledName(GD);
+      OpenMPRuntime->addTrackedFunction(MangledName, GD);
+    }
+
     // If this is OpenMP device, check if it is legal to emit this global
     // normally.
     if (OpenMPRuntime && OpenMPRuntime->emitTargetGlobal(GD))
@@ -1786,6 +1847,28 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
       if (MustBeEmitted(Global))
         EmitOMPDeclareReduction(DRD);
       return;
+    }
+  }
+
+  // If this is C++AMP, be selective about which declarations we emit.
+  if (LangOpts.CPlusPlusAMP && !CodeGenOpts.AMPCPU) {
+    if (CodeGenOpts.AMPIsDevice) {
+      // If -famp-is-device switch is on, we are in GPU build path.
+      // Since we will emit both CPU codes and GPU codes to make C++ mangling
+      // algorithm happy, we won't reject anything other than ones with only
+      // restrict(cpu).  Another optimization pass will remove all CPU codes.
+      if (!Global->hasAttr<CXXAMPRestrictAMPAttr>() &&
+         Global->hasAttr<CXXAMPRestrictCPUAttr>())
+        return;
+    } else {
+      // In host path:
+      // let file-scope global variables be emitted
+      // let functions qualifired with restrict(amp) or [[hc]],
+      // but not with restrict(cpu) or [[cpu]] not be emitted
+      if (!isa<VarDecl>(Global) &&
+          Global->hasAttr<CXXAMPRestrictAMPAttr>() &&
+          !Global->hasAttr<CXXAMPRestrictCPUAttr>())
+        return;
     }
   }
 
@@ -1868,13 +1951,13 @@ void CodeGenModule::EmitGlobal(GlobalDecl GD) {
   }
 
   StringRef MangledName = getMangledName(GD);
-  if (GetGlobalValue(MangledName) != nullptr) {
+  if (llvm::GlobalValue *GV = GetGlobalValue(MangledName)) {
     // The value has already been used and should therefore be emitted.
-    addDeferredDeclToEmit(GD);
+    addDeferredDeclToEmit(GV,GD);
   } else if (MustBeEmitted(Global)) {
     // The value must be emitted, but cannot be emitted eagerly.
     assert(!MayBeEmittedEagerly(Global));
-    addDeferredDeclToEmit(GD);
+    addDeferredDeclToEmit(/*GV=*/nullptr, GD);
   } else {
     // Otherwise, remember that we saw a deferred decl with this name.  The
     // first use of the mangled name will cause it to move into
@@ -2147,9 +2230,14 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
   PrettyStackTraceDecl CrashInfo(const_cast<ValueDecl *>(D), D->getLocation(), 
                                  Context.getSourceManager(),
                                  "Generating code for declaration");
-  
+
+  // If this is OpenMP device, check if it is legal to emit this global
+  // normally.
+  if (OpenMPRuntime && OpenMPRuntime->emitTargetGlobal(GD))
+    return;
+
   if (isa<FunctionDecl>(D)) {
-    // At -O0, don't generate IR for functions with available_externally 
+    // At -O0, don't generate IR for functions with available_externally
     // linkage.
     if (!shouldEmitFunction(GD))
       return;
@@ -2157,11 +2245,15 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
     if (const auto *Method = dyn_cast<CXXMethodDecl>(D)) {
       // Make sure to emit the definition(s) before we emit the thunks.
       // This is necessary for the generation of certain thunks.
-      if (const auto *CD = dyn_cast<CXXConstructorDecl>(Method))
+      if (const auto *CD = dyn_cast<CXXConstructorDecl>(Method)) {
+        if (OpenMPRuntime)
+          OpenMPRuntime->registerTargetFunctionDefinition(GD);
         ABI->emitCXXStructor(CD, getFromCtorType(GD.getCtorType()));
-      else if (const auto *DD = dyn_cast<CXXDestructorDecl>(Method))
+      } else if (const auto *DD = dyn_cast<CXXDestructorDecl>(Method)) {
+        if (OpenMPRuntime)
+          OpenMPRuntime->registerTargetFunctionDefinition(GD);
         ABI->emitCXXStructor(DD, getFromDtorType(GD.getDtorType()));
-      else
+      } else
         EmitGlobalFunctionDefinition(GD, GV);
 
       if (Method->isVirtual())
@@ -2175,7 +2267,7 @@ void CodeGenModule::EmitGlobalDefinition(GlobalDecl GD, llvm::GlobalValue *GV) {
 
   if (const auto *VD = dyn_cast<VarDecl>(D))
     return EmitGlobalVarDefinition(VD, !VD->hasDefinition());
-  
+
   llvm_unreachable("Invalid argument to EmitGlobalDefinition()");
 }
 
@@ -2194,6 +2286,11 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     bool DontDefer, bool IsThunk, llvm::AttributeList ExtraAttrs,
     ForDefinition_t IsForDefinition) {
   const Decl *D = GD.getDecl();
+
+  // Process function name as required by the OpenMP runtime
+  if (OpenMPRuntime) {
+    MangledName = OpenMPRuntime->RenameStandardFunction(MangledName);
+  }
 
   // Lookup the entry, lazily creating it if necessary.
   llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
@@ -2291,7 +2388,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
                           IsForDefinition);
   if (ExtraAttrs.hasAttributes(llvm::AttributeList::FunctionIndex)) {
     llvm::AttrBuilder B(ExtraAttrs, llvm::AttributeList::FunctionIndex);
-    F->addAttributes(llvm::AttributeList::FunctionIndex, B);
+    F->addAttributes(llvm::AttributeList::FunctionIndex,B);
   }
 
   if (!DontDefer) {
@@ -2301,7 +2398,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     if (D && isa<CXXDestructorDecl>(D) &&
         getCXXABI().useThunkForDtorVariant(cast<CXXDestructorDecl>(D),
                                            GD.getDtorType()))
-      addDeferredDeclToEmit(GD);
+      addDeferredDeclToEmit(F, GD);
 
     // This is the first use or definition of a mangled name.  If there is a
     // deferred decl with this name, remember that we need to emit it at the end
@@ -2311,7 +2408,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
       // Move the potentially referenced deferred decl to the
       // DeferredDeclsToEmit list, and remove it from DeferredDecls (since we
       // don't need it anymore).
-      addDeferredDeclToEmit(DDI->second);
+      addDeferredDeclToEmit(F, DDI->second);
       DeferredDecls.erase(DDI);
 
       // Otherwise, there are cases we have to worry about where we're
@@ -2331,7 +2428,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
            FD = FD->getPreviousDecl()) {
         if (isa<CXXRecordDecl>(FD->getLexicalDeclContext())) {
           if (FD->doesThisDeclarationHaveABody()) {
-            addDeferredDeclToEmit(GD.getWithDecl(FD));
+            addDeferredDeclToEmit(F, GD.getWithDecl(FD));
             break;
           }
         }
@@ -2347,6 +2444,140 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
 
   llvm::Type *PTy = llvm::PointerType::getUnqual(Ty);
   return llvm::ConstantExpr::getPointerCast(F, PTy);
+}
+
+ 
+/// GetOrCreateLLVMGlobal - If the specified mangled name is not in the module,
+/// create and return an llvm GlobalVariable with the specified type.  If there
+/// is something in the module with the specified name, return it potentially
+/// casted to the right type.
+///
+/// If D is non-null, it specifies a decl that correspond to this.  This is used
+/// to set the attributes on the global when it is first created.
+///
+/// If IsForDefinition is true, it is guranteed that an actual global with
+/// type Ty will be returned, not conversion of a variable with the same
+/// mangled name but some other type.
+llvm::Constant *
+CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
+                                     llvm::PointerType *Ty,
+                                     const VarDecl *D,
+                                     ForDefinition_t IsForDefinition) {
+  // Lookup the entry, lazily creating it if necessary.
+  llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
+  if (Entry) {
+    if (WeakRefReferences.erase(Entry)) {
+      if (D && !D->hasAttr<WeakAttr>())
+        Entry->setLinkage(llvm::Function::ExternalLinkage);
+    }
+
+    // Handle dropped DLL attributes.
+    if (D && !D->hasAttr<DLLImportAttr>() && !D->hasAttr<DLLExportAttr>())
+      Entry->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
+
+    if (Entry->getType() == Ty)
+      return Entry;
+
+    // If there are two attempts to define the same mangled name, issue an
+    // error.
+    if (IsForDefinition && !Entry->isDeclaration()) {
+      GlobalDecl OtherGD;
+      const VarDecl *OtherD;
+
+      // Check that D is not yet in DiagnosedConflictingDefinitions is required
+      // to make sure that we issue an error only once.
+      if (D && lookupRepresentativeDecl(MangledName, OtherGD) &&
+          (D->getCanonicalDecl() != OtherGD.getCanonicalDecl().getDecl()) &&
+          (OtherD = dyn_cast<VarDecl>(OtherGD.getDecl())) &&
+          OtherD->hasInit() &&
+          DiagnosedConflictingDefinitions.insert(D).second) {
+        getDiags().Report(D->getLocation(),
+                          diag::err_duplicate_mangled_name);
+        getDiags().Report(OtherGD.getDecl()->getLocation(),
+                          diag::note_previous_definition);
+      }
+    }
+
+    // (If global is requested for a definition, we always need to create a new
+    // global, not just return a bitcast.)
+    if (!IsForDefinition)
+      return llvm::ConstantExpr::getPointerCast(Entry, Ty);
+  }
+
+  auto AddrSpace = GetGlobalVarAddressSpace(D);
+  auto TargetAddrSpace = getContext().getTargetAddressSpace(AddrSpace);
+
+  auto *GV = new llvm::GlobalVariable(
+      getModule(), Ty->getElementType(), false,
+      llvm::GlobalValue::ExternalLinkage, nullptr, MangledName, nullptr,
+      llvm::GlobalVariable::NotThreadLocal, TargetAddrSpace);
+
+  // If we already created a global with the same mangled name (but different
+  // type) before, take its name and remove it from its parent.
+  if (Entry) {
+    GV->takeName(Entry);
+
+    if (!Entry->use_empty()) {
+      llvm::Constant *NewPtrForOldDecl =
+          llvm::ConstantExpr::getPointerCast(GV, Entry->getType());
+      Entry->replaceAllUsesWith(NewPtrForOldDecl);
+    }
+
+    Entry->eraseFromParent();
+  }
+
+  // This is the first use or definition of a mangled name.  If there is a
+  // deferred decl with this name, remember that we need to emit it at the end
+  // of the file.
+  auto DDI = DeferredDecls.find(MangledName);
+  if (DDI != DeferredDecls.end()) {
+    // Move the potentially referenced deferred decl to the DeferredDeclsToEmit
+    // list, and remove it from DeferredDecls (since we don't need it anymore).
+    addDeferredDeclToEmit(GV,DDI->second);
+    DeferredDecls.erase(DDI);
+  }
+
+  // Handle things which are present even on external declarations.
+  if (D) {
+    // FIXME: This code is overly simple and should be merged with other global
+    // handling.
+    GV->setConstant(isTypeConstant(D->getType(), false));
+
+    GV->setAlignment(getContext().getDeclAlign(D).getQuantity());
+
+    setLinkageAndVisibilityForGV(GV, D);
+
+    if (D->getTLSKind()) {
+      if (D->getTLSKind() == VarDecl::TLS_Dynamic)
+        CXXThreadLocals.push_back(D);
+      setTLSMode(GV, *D);
+    }
+
+    // If required by the ABI, treat declarations of static data members with
+    // inline initializers as definitions.
+    if (getContext().isMSStaticDataMemberInlineDefinition(D)) {
+      EmitGlobalVarDefinition(D);
+    }
+
+    // Handle XCore specific ABI requirements.
+    if (getTriple().getArch() == llvm::Triple::xcore &&
+        D->getLanguageLinkage() == CLanguageLinkage &&
+        D->getType().isConstant(Context) &&
+        isExternallyVisible(D->getLinkageAndVisibility().getLinkage()))
+      GV->setSection(".cp.rodata");
+  }
+
+  auto ExpectedAS =
+      D ? D->getType().getAddressSpace()
+        : static_cast<unsigned>(LangOpts.OpenCL ? LangAS::opencl_global
+                                                : LangAS::Default);
+  assert(getContext().getTargetAddressSpace(ExpectedAS) ==
+         Ty->getPointerAddressSpace());
+  if (AddrSpace != ExpectedAS)
+    return getTargetCodeGenInfo().performAddrSpaceCast(*this, GV, AddrSpace,
+                                                       ExpectedAS, Ty);
+
+  return GV;
 }
 
 /// GetAddrOfFunction - Return the address of the given function.  If Ty is
@@ -2471,138 +2702,6 @@ bool CodeGenModule::isTypeConstant(QualType Ty, bool ExcludeCtor) {
   return true;
 }
 
-/// GetOrCreateLLVMGlobal - If the specified mangled name is not in the module,
-/// create and return an llvm GlobalVariable with the specified type.  If there
-/// is something in the module with the specified name, return it potentially
-/// casted to the right type.
-///
-/// If D is non-null, it specifies a decl that correspond to this.  This is used
-/// to set the attributes on the global when it is first created.
-///
-/// If IsForDefinition is true, it is guranteed that an actual global with
-/// type Ty will be returned, not conversion of a variable with the same
-/// mangled name but some other type.
-llvm::Constant *
-CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
-                                     llvm::PointerType *Ty,
-                                     const VarDecl *D,
-                                     ForDefinition_t IsForDefinition) {
-  // Lookup the entry, lazily creating it if necessary.
-  llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
-  if (Entry) {
-    if (WeakRefReferences.erase(Entry)) {
-      if (D && !D->hasAttr<WeakAttr>())
-        Entry->setLinkage(llvm::Function::ExternalLinkage);
-    }
-
-    // Handle dropped DLL attributes.
-    if (D && !D->hasAttr<DLLImportAttr>() && !D->hasAttr<DLLExportAttr>())
-      Entry->setDLLStorageClass(llvm::GlobalValue::DefaultStorageClass);
-
-    if (Entry->getType() == Ty)
-      return Entry;
-
-    // If there are two attempts to define the same mangled name, issue an
-    // error.
-    if (IsForDefinition && !Entry->isDeclaration()) {
-      GlobalDecl OtherGD;
-      const VarDecl *OtherD;
-
-      // Check that D is not yet in DiagnosedConflictingDefinitions is required
-      // to make sure that we issue an error only once.
-      if (D && lookupRepresentativeDecl(MangledName, OtherGD) &&
-          (D->getCanonicalDecl() != OtherGD.getCanonicalDecl().getDecl()) &&
-          (OtherD = dyn_cast<VarDecl>(OtherGD.getDecl())) &&
-          OtherD->hasInit() &&
-          DiagnosedConflictingDefinitions.insert(D).second) {
-        getDiags().Report(D->getLocation(),
-                          diag::err_duplicate_mangled_name);
-        getDiags().Report(OtherGD.getDecl()->getLocation(),
-                          diag::note_previous_definition);
-      }
-    }
-
-    // (If global is requested for a definition, we always need to create a new
-    // global, not just return a bitcast.)
-    if (!IsForDefinition)
-      return llvm::ConstantExpr::getPointerCast(Entry, Ty);
-  }
-
-  auto AddrSpace = GetGlobalVarAddressSpace(D);
-  auto TargetAddrSpace = getContext().getTargetAddressSpace(AddrSpace);
-
-  auto *GV = new llvm::GlobalVariable(
-      getModule(), Ty->getElementType(), false,
-      llvm::GlobalValue::ExternalLinkage, nullptr, MangledName, nullptr,
-      llvm::GlobalVariable::NotThreadLocal, TargetAddrSpace);
-
-  // If we already created a global with the same mangled name (but different
-  // type) before, take its name and remove it from its parent.
-  if (Entry) {
-    GV->takeName(Entry);
-
-    if (!Entry->use_empty()) {
-      llvm::Constant *NewPtrForOldDecl =
-          llvm::ConstantExpr::getPointerCast(GV, Entry->getType());
-      Entry->replaceAllUsesWith(NewPtrForOldDecl);
-    }
-
-    Entry->eraseFromParent();
-  }
-
-  // This is the first use or definition of a mangled name.  If there is a
-  // deferred decl with this name, remember that we need to emit it at the end
-  // of the file.
-  auto DDI = DeferredDecls.find(MangledName);
-  if (DDI != DeferredDecls.end()) {
-    // Move the potentially referenced deferred decl to the DeferredDeclsToEmit
-    // list, and remove it from DeferredDecls (since we don't need it anymore).
-    addDeferredDeclToEmit(DDI->second);
-    DeferredDecls.erase(DDI);
-  }
-
-  // Handle things which are present even on external declarations.
-  if (D) {
-    // FIXME: This code is overly simple and should be merged with other global
-    // handling.
-    GV->setConstant(isTypeConstant(D->getType(), false));
-
-    GV->setAlignment(getContext().getDeclAlign(D).getQuantity());
-
-    setLinkageAndVisibilityForGV(GV, D);
-
-    if (D->getTLSKind()) {
-      if (D->getTLSKind() == VarDecl::TLS_Dynamic)
-        CXXThreadLocals.push_back(D);
-      setTLSMode(GV, *D);
-    }
-
-    // If required by the ABI, treat declarations of static data members with
-    // inline initializers as definitions.
-    if (getContext().isMSStaticDataMemberInlineDefinition(D)) {
-      EmitGlobalVarDefinition(D);
-    }
-
-    // Handle XCore specific ABI requirements.
-    if (getTriple().getArch() == llvm::Triple::xcore &&
-        D->getLanguageLinkage() == CLanguageLinkage &&
-        D->getType().isConstant(Context) &&
-        isExternallyVisible(D->getLinkageAndVisibility().getLinkage()))
-      GV->setSection(".cp.rodata");
-  }
-
-  auto ExpectedAS =
-      D ? D->getType().getAddressSpace()
-        : static_cast<unsigned>(LangOpts.OpenCL ? LangAS::opencl_global
-                                                : LangAS::Default);
-  assert(getContext().getTargetAddressSpace(ExpectedAS) ==
-         Ty->getPointerAddressSpace());
-  if (AddrSpace != ExpectedAS)
-    return getTargetCodeGenInfo().performAddrSpaceCast(*this, GV, AddrSpace,
-                                                       ExpectedAS, Ty);
-
-  return GV;
-}
 
 llvm::Constant *
 CodeGenModule::GetAddrOfGlobal(GlobalDecl GD,
@@ -2706,6 +2805,11 @@ CodeGenModule::CreateRuntimeVariable(llvm::Type *Ty,
 
 void CodeGenModule::EmitTentativeDefinition(const VarDecl *D) {
   assert(!D->getInit() && "Cannot emit definite definitions here!");
+
+  // If this is OpenMP device, check if it is legal to emit this global
+  // normally.
+  if (OpenMPRuntime && OpenMPRuntime->emitTargetGlobal(D))
+    return;
 
   StringRef MangledName = getMangledName(D);
   llvm::GlobalValue *GV = GetGlobalValue(MangledName);
@@ -2851,6 +2955,9 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   else if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
            D->hasAttr<HCCTileStaticAttr>())
     Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy));
+  else if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+           D->hasAttr<HCCTileStaticAttr>())
+    Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy));
   else if (!InitExpr) {
     // This is a tentative definition; tentative definitions are
     // implicitly initialized with { 0 }.
@@ -2978,6 +3085,8 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
         Linkage = llvm::GlobalValue::InternalLinkage;
     }
   }
+  if (OpenMPRuntime)
+    OpenMPRuntime->registerTargetVariableDefinition(D, GV);
   GV->setInitializer(Init);
 
   // If it is safe to mark the global 'constant', do so now.
@@ -3338,6 +3447,9 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
     }
   }
 
+  if (OpenMPRuntime)
+    OpenMPRuntime->registerTargetFunctionDefinition(GD);
+
   // We need to set linkage and visibility on the function before
   // generating code for it because various parts of IR generation
   // want to propagate this information down (e.g. to local static
@@ -3354,6 +3466,8 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
   maybeSetTrivialComdat(*D, *Fn);
 
   CodeGenFunction(*this).GenerateCode(D, Fn, FI);
+  if((getTriple().getArch() == llvm::Triple::amdgcn) && D->hasAttr<CUDAGlobalAttr>())
+     Fn->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
 
   setFunctionDefinitionAttributes(D, Fn);
   SetLLVMFunctionAttributesForDefinition(D, Fn);
@@ -4446,7 +4560,7 @@ static void EmitGlobalDeclMetadata(CodeGenModule &CGM,
 void CodeGenModule::EmitStaticExternCAliases() {
   // Don't do anything if we're generating CUDA device code -- the NVPTX
   // assembly target doesn't support aliases.
-  if (Context.getTargetInfo().getTriple().isNVPTX())
+  if (Context.getTargetInfo().getTriple().isGpu()) 
     return;
   for (auto &I : StaticExternCValues) {
     IdentifierInfo *Name = I.first;
@@ -4596,6 +4710,11 @@ llvm::Constant *CodeGenModule::GetAddrOfRTTIDescriptor(QualType Ty,
   if (ForEH && Ty->isObjCObjectPointerType() &&
       LangOpts.ObjCRuntime.isGNUFamily())
     return ObjCRuntime->GetEHType(Ty);
+
+  // If generating code for an OpenMP device, do not emit RTTI descriptors if
+  // the device does not support that.
+  if (getLangOpts().OpenMP && !OpenMPRuntime->requiresRTTIDescriptor())
+    return llvm::Constant::getNullValue(Int8PtrTy);
 
   return getCXXABI().getAddrOfRTTIDescriptor(Ty);
 }

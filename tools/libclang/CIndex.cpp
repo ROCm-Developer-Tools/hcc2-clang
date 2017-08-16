@@ -2264,6 +2264,7 @@ void OMPClauseEnqueue::VisitOMPReductionClause(const OMPReductionClause *C) {
     Visitor->AddStmt(E);
   }
 }
+#if 0
 void OMPClauseEnqueue::VisitOMPTaskReductionClause(
     const OMPTaskReductionClause *C) {
   VisitOMPClauseList(C);
@@ -2300,6 +2301,7 @@ void OMPClauseEnqueue::VisitOMPInReductionClause(
   for (auto *E : C->taskgroup_descriptors())
     Visitor->AddStmt(E);
 }
+#endif
 void OMPClauseEnqueue::VisitOMPLinearClause(const OMPLinearClause *C) {
   VisitOMPClauseList(C);
   VisitOMPClauseWithPostUpdate(C);
@@ -2757,8 +2759,10 @@ void EnqueueVisitor::VisitOMPTaskwaitDirective(const OMPTaskwaitDirective *D) {
 void EnqueueVisitor::VisitOMPTaskgroupDirective(
     const OMPTaskgroupDirective *D) {
   VisitOMPExecutableDirective(D);
+#if 0
   if (const Expr *E = D->getReductionRef())
     VisitStmt(E);
+#endif
 }
 
 void EnqueueVisitor::VisitOMPFlushDirective(const OMPFlushDirective *D) {
