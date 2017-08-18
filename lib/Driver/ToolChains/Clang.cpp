@@ -2698,9 +2698,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       !Is_amdgcn && !getToolChain().getTriple().isGpu())
     CmdArgs.push_back("-mconstructor-aliases");
 
-  // FIXME: Termporarily disble lifetime markers till AS-specific allocas work. 
-  if (Is_amdgcn) CmdArgs.push_back("-disable-lifetime-markers");
-
   // Darwin's kernel doesn't support guard variables; just die if we
   // try to use them.
   if (KernelOrKext && getToolChain().getTriple().isOSDarwin())

@@ -949,17 +949,31 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
     return nullptr;
 
   llvm::Value *SizeV = llvm::ConstantInt::get(Int64Ty, Size);
-  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
-  llvm::CallInst *C =
-      Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
+  llvm::CallInst *C; 
+  if (isa<llvm::AddrSpaceCastInst>(Addr)) {
+    llvm::Value *AddrOrig = 
+      dyn_cast<llvm::AddrSpaceCastInst>(Addr)->getPointerOperand();
+    AddrOrig = Builder.CreateBitCast(AddrOrig, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, AddrOrig});
+  } else {
+    Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
+  }
   C->setDoesNotThrow();
   return SizeV;
 }
 
 void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr) {
-  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
-  llvm::CallInst *C =
-      Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
+  llvm::CallInst *C ;
+  if (isa<llvm::AddrSpaceCastInst>(Addr)) {
+    llvm::Value *AddrOrig = 
+      dyn_cast<llvm::AddrSpaceCastInst>(Addr)->getPointerOperand();
+    AddrOrig = Builder.CreateBitCast(AddrOrig, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, AddrOrig});
+  } else {
+    Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
+  }
   C->setDoesNotThrow();
 }
 

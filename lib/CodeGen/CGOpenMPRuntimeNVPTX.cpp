@@ -1525,6 +1525,12 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   llvm::BasicBlock *BarrierBB = CGF.createBasicBlock(".barrier.parallel");
   llvm::BasicBlock *ExitBB = CGF.createBasicBlock(".exit");
 
+  Address WorkFn = CGF.CreateTempAlloca(
+      CGF.Int8PtrTy, CharUnits::fromQuantity(8), /*Name*/ "work_fn");
+  auto FnPtrSize = CGM.getDataLayout().getTypeAllocSize(CGF.Int8PtrTy);
+  CGF.EmitLifetimeStart(FnPtrSize, WorkFn.getPointer());
+  llvm::Value * tempSize = llvm::ConstantInt::get(CGM.Int64Ty, FnPtrSize);
+
   CGF.EmitBranch(AwaitBB);
 
   // Workers wait for work from master.
@@ -1532,8 +1538,6 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   // Wait for parallel work
   SyncCTAThreads(CGF);
 
-  Address WorkFn = CGF.CreateTempAlloca(
-      CGF.Int8PtrTy, CharUnits::fromQuantity(8), /*Name*/ "work_fn");
   Address ExecStatus =
       CGF.CreateTempAlloca(CGF.Int8Ty, CharUnits::fromQuantity(1),
                            /*Name*/ "exec_status");
@@ -1671,6 +1675,7 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
 
   // Exit target region.
   CGF.EmitBlock(ExitBB);
+  CGF.EmitLifetimeEnd(tempSize,WorkFn.getPointer());
 }
 
 // Setup NVPTX threads for master-worker OpenMP scheme.

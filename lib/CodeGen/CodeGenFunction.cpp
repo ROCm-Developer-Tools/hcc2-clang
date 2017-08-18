@@ -55,12 +55,6 @@ static bool shouldEmitLifetimeMarkers(const CodeGenOptions &CGOpts,
   if (LangOpts.CPlusPlusAMP && CGOpts.AMPIsDevice)
     return false;
 
-  // Disable lifetime markers for all openmp amdgcn
-  for( auto &TT: LangOpts.OMPTargetTriples) {
-    if (TT.getTriple().find("amdgcn")!=std::string::npos) 
-      return false;
-  }
-
   // Asan uses markers for use-after-scope checks.
   if (CGOpts.SanitizeAddressUseAfterScope)
     return true;
