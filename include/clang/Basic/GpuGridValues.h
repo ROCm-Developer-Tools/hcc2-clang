@@ -74,11 +74,11 @@ static const int AMDGPUGpuGridValues[] = {
   64 * 256,          // GV_Warp_Slot_Size 
   1024,              // GV_Max_Teams 
   256,
-  (~0u >> (32 - 6)), // GV_Warp_Size_Log2_Mask
+  63,                // GV_Warp_Size_Log2_Mask
   896                // GV_SimpleBufferSize
 };
 static const long long AMDGPUGpuLongGridValues[] = {
-  (~0ull >> (64 - 6)) // GV_Warp_Size_Log2_MaskL
+  63                 // GV_Warp_Size_Log2_MaskL
 };
 
 /// For Nvidia GPUs
@@ -95,7 +95,7 @@ static const int NVPTXGpuGridValues[] = {
 };
 
 static const long long NVPTXGpuLongGridValues[] = {
-  (~0ull >> (64 - 5))  // GV_Warp_Size_Log2_MaskL
+  31                  // GV_Warp_Size_Log2_MaskL
 };
 
 }
