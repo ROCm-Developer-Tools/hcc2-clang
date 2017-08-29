@@ -727,6 +727,9 @@ AddDirectArgument(CodeGenFunction &CGF, CallArgList &Args,
         CGF.getContext().getIntTypeForBitwidth(SizeInBits, /*Signed=*/false);
     llvm::Type *IPtrTy = llvm::IntegerType::get(CGF.getLLVMContext(),
                                                 SizeInBits)->getPointerTo();
+    if (Val->getType()->getPointerAddressSpace())
+      Val = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Val,IPtrTy,
+            Val->getName() + "_casted");
     Address Ptr = Address(CGF.Builder.CreateBitCast(Val, IPtrTy), Align);
     Val = CGF.EmitLoadOfScalar(Ptr, false,
                                CGF.getContext().getPointerType(ValTy),
@@ -1167,6 +1170,10 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E) {
       if (E->getOp() == AtomicExpr::AO__atomic_nand_fetch)
         ResVal = Builder.CreateNot(ResVal);
 
+      if (Dest.getPointer()->getType()->getPointerAddressSpace())
+        Dest = Builder.CreatePointerBitCastOrAddrSpaceCast(Dest,
+               ResVal->getType()->getPointerTo(),
+               Dest.getPointer()->getName() + "_casted");
       Builder.CreateStore(
           ResVal,
           Builder.CreateBitCast(Dest, ResVal->getType()->getPointerTo()));
