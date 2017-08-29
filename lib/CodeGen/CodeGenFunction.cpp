@@ -117,7 +117,7 @@ CodeGenFunction::~CodeGenFunction() {
   if (FirstBlockInfo)
     destroyBlockInfos(FirstBlockInfo);
 
-  if (getLangOpts().OpenMP && CurFn)
+  if (getLangOpts().OpenMP)
     CGM.getOpenMPRuntime().functionFinished(*this);
 }
 
@@ -1074,10 +1074,15 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     // the standard (C99 6.9.1p10) requires this, but we're following the
     // precedent set by gcc.
     QualType Ty;
-    if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD))
+    if (const ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(VD)) {
       Ty = PVD->getOriginalType();
-    else
+      if( Ty.getTypePtr()->isAnyPointerType() &&
+          (CGM.getTriple().getArch()==llvm::Triple::amdgcn))
+        // Use updated AS-qualified Type for amd gpu kernel args
+        Ty = PVD->getType();
+    } else  {
       Ty = VD->getType();
+    }
 
     if (Ty->isVariablyModifiedType())
       EmitVariablyModifiedType(Ty);
@@ -1159,13 +1164,20 @@ QualType CodeGenFunction::BuildFunctionArgList(GlobalDecl GD,
 
   if (PassedParams) {
     for (auto *Param : FD->parameters()) {
+      // CUDA Function args with __device__ must be in AS1 for amdgcn
+      if( Param->getType()->isPointerType() &&
+          (CGM.getTriple().getArch()==llvm::Triple::amdgcn) &&
+          (Param->hasAttr<CUDADeviceAttr>()) )
+        Param->setType(getContext().getAddrSpaceQualType(
+          Param->getType(),LangAS::cuda_device));
       Args.push_back(Param);
       if (!Param->hasAttr<PassObjectSizeAttr>())
         continue;
 
+      IdentifierInfo *NoID = nullptr;
       auto *Implicit = ImplicitParamDecl::Create(
           getContext(), Param->getDeclContext(), Param->getLocation(),
-          /*Id=*/nullptr, getContext().getSizeType(), ImplicitParamDecl::Other);
+          NoID, getContext().getSizeType(), ImplicitParamDecl::Other);
       SizeArguments[Param] = Implicit;
       Args.push_back(Implicit);
     }

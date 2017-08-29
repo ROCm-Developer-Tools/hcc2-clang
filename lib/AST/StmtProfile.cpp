@@ -549,6 +549,7 @@ void OMPClauseProfiler::VisitOMPReductionClause(
       Profiler->VisitStmt(E);
   }
 }
+#if 0
 void OMPClauseProfiler::VisitOMPTaskReductionClause(
     const OMPTaskReductionClause *C) {
   Profiler->VisitNestedNameSpecifier(
@@ -601,6 +602,7 @@ void OMPClauseProfiler::VisitOMPInReductionClause(
       Profiler->VisitStmt(E);
   }
 }
+#endif
 void OMPClauseProfiler::VisitOMPLinearClause(const OMPLinearClause *C) {
   VisitOMPClauseList(C);
   VistOMPClauseWithPostUpdate(C);
@@ -802,8 +804,10 @@ void StmtProfiler::VisitOMPTaskwaitDirective(const OMPTaskwaitDirective *S) {
 
 void StmtProfiler::VisitOMPTaskgroupDirective(const OMPTaskgroupDirective *S) {
   VisitOMPExecutableDirective(S);
+#if 0
   if (const Expr *E = S->getReductionRef())
     VisitStmt(E);
+#endif
 }
 
 void StmtProfiler::VisitOMPFlushDirective(const OMPFlushDirective *S) {

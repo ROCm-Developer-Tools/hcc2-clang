@@ -8521,6 +8521,7 @@ def err_amp_tile_static_unsupported_usage : Error<
 " tile_static cannot be used in a non-amp restricted scope">;
 def err_amp_using_nullptr_in_tile_static : Error<
 " '0': is not allowed on tile_static">;
+
 def err_amp_tile_static_pointer_or_reference : Error<
 " tile_static variables cannot contain pointer or reference type">;
 def err_amp_constant_out_of_supported_range : Error<
@@ -8909,8 +8910,8 @@ def err_omp_not_mappable_type : Error<
   "type %0 is not mappable to target">;
 def err_omp_invalid_map_type_for_directive : Error<
   "%select{map type '%1' is not allowed|map type must be specified}0 for '#pragma omp %2'">;
-def err_omp_no_clause_for_directive : Error<
-  "expected at least one %0 clause for '#pragma omp %1'">;
+def err_omp_no_map_for_directive : Error<
+  "expected at least one map clause for '#pragma omp %0'">;
 def note_omp_polymorphic_in_target : Note<
   "mappable type cannot be polymorphic">;
 def note_omp_static_member_in_target : Note<
@@ -8933,6 +8934,12 @@ def note_omp_critical_hint_here : Note<
   "%select{|previous }0'hint' clause with value '%1'">;
 def note_omp_critical_no_hint : Note<
   "%select{|previous }0directive with no 'hint' clause specified">;
+def err_omp_firstprivate_distribute_private_teams : Error<
+  "private variable in '#pragma omp teams' cannot be firstprivate in '#pragma omp distribute'">;
+def err_omp_firstprivate_and_lastprivate_in_distribute : Error<
+  "lastprivate variable cannot be firstprivate in '#pragma omp distribute'">;
+def err_omp_firstprivate_distribute_in_teams_reduction : Error<
+  "reduction variable in '#pragma omp teams' cannot be firstprivate in '#pragma omp distribute'">;
 def err_omp_depend_clause_thread_simd : Error<
   "'depend' clauses cannot be mixed with '%0' clause">;
 def err_omp_depend_sink_expected_loop_iteration : Error<

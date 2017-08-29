@@ -8057,6 +8057,34 @@ bool Sema::CheckFunctionTemplateSpecialization(
         }
       }
 
+      // C++ AMP
+      // Check if the specialization has the same or more restriction specifiers
+      // Truth table (row: restriction specifier of the input, column: restriction specifier of the candidate.
+      // +---------+------+-----+-----+---------+
+      // |         | none | cpu | amp | cpu/amp |
+      // +---------+------+-----+-----+---------+
+      // | none    |  OK  |  OK |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | cpu     |  OK  |  OK |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | amp     |  NG  |  NG |  OK |  OK     |
+      // +---------+------+-----+-----+---------+
+      // | cpu/amp |  NG  |  NG |  NG |  OK     |
+      // +---------+------+-----+-----+---------+
+      if (getLangOpts().CPlusPlusAMP) {
+        if (FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+          if (!Specialization->hasAttr<CXXAMPRestrictAMPAttr>()) {
+            continue;
+          } else if (FD->hasAttr<CXXAMPRestrictCPUAttr>() && !Specialization->hasAttr<CXXAMPRestrictCPUAttr>()) {
+            continue;
+          }
+        } else {
+          if (Specialization->hasAttr<CXXAMPRestrictAMPAttr>() && !Specialization->hasAttr<CXXAMPRestrictCPUAttr>()) {
+            continue;
+          }
+        }
+      }
+
       // Record this candidate.
       if (ExplicitTemplateArgs)
         ConvertedTemplateArgs[Specialization] = std::move(Args);
@@ -8161,6 +8189,22 @@ bool Sema::CheckFunctionTemplateSpecialization(
     // FIXME: We need an update record for this AST mutation.
     SpecInfo->setTemplateSpecializationKind(TSK_ExplicitSpecialization);
     MarkUnusedFileScopedDecl(Specialization);
+  }
+
+  // C++ AMP
+  if (getLangOpts().CPlusPlusAMP) {
+    SourceLocation Loc = FD->getLocation();
+    if (FD->hasAttr<CXXAMPRestrictAMPAttr>()) {
+      if (!Specialization->hasAttr<CXXAMPRestrictAMPAttr>())
+        Specialization->addAttr(::new (Context) CXXAMPRestrictAMPAttr(Loc, Context, 0));
+    } else
+      Specialization->dropAttr<CXXAMPRestrictAMPAttr>();
+
+    if (FD->hasAttr<CXXAMPRestrictCPUAttr>()) {
+      if (!Specialization->hasAttr<CXXAMPRestrictCPUAttr>())
+        Specialization->addAttr(::new (Context) CXXAMPRestrictCPUAttr(Loc, Context, 0));
+     } else
+       Specialization->dropAttr<CXXAMPRestrictCPUAttr>();
   }
 
   // C++ AMP

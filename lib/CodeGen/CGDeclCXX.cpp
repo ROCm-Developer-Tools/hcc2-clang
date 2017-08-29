@@ -368,6 +368,15 @@ CodeGenModule::EmitCXXGlobalVarDeclInitFunc(const VarDecl *D,
       D->hasAttr<HCCTileStaticAttr>())
     return;
 
+  // If we are in OpenMP device mode we need to generate an entry point for each
+  // structor instead of the normal initialization.
+  if (OpenMPRuntime && OpenMPRuntime->emitDeviceCtorDtor(*D, Addr, PerformInit))
+    return;
+
+  if (getLangOpts().CPlusPlusAMP && getLangOpts().DevicePath &&
+      D->hasAttr<HCCTileStaticAttr>())
+    return;
+
   // Check if we've already initialized this decl.
   auto I = DelayedCXXInitPosition.find(D);
   if (I != DelayedCXXInitPosition.end() && I->second == ~0U)
@@ -557,6 +566,11 @@ void CodeGenFunction::GenerateCXXGlobalVarDeclInitFunc(llvm::Function *Fn,
   } else {
     EmitCXXGlobalVarDeclInit(*D, Addr, PerformInit);
   }
+
+  // Register initializers and destructors for this variable.
+  if (CGM.getLangOpts().OpenMP)
+    CGM.getOpenMPRuntime().registerDeviceCtorDtorLaunching(*this, *D, Addr,
+                                                           PerformInit);
 
   FinishFunction();
 }

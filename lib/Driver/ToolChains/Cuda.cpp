@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Cuda.h"
+#include "CommonArgs.h"
 #include "InputInfo.h"
 #include "CommonArgs.h"
 #include "clang/Basic/Cuda.h"
@@ -169,6 +170,48 @@ CudaInstallationDetector::CudaInstallationDetector(
     IsValid = true;
     break;
   }
+
+  // Search for GCN Device Libraries
+  std::string GCNPath;
+  for (Arg *A : Args) {
+    if( A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) &&
+        StringRef(A->getValue()).startswith("gfx") ) {
+      SmallVector<std::string, 4> GCNPathCandidates;
+      if (Args.hasArg(options::OPT_gcndevice_path_EQ)) {
+        GCNPathCandidates.push_back(
+            Args.getLastArgValue(options::OPT_gcndevice_path_EQ));
+      } else {
+        if (const char *libamdgcn = getenv("LIBAMDGCN"))
+          GCNPathCandidates.push_back(D.SysRoot + libamdgcn);
+        else
+          GCNPathCandidates.push_back(D.SysRoot + "/opt/rocm/libamdgcn");
+      }
+      for (const auto &CPath : GCNPathCandidates) {
+        if (CPath.empty() || !D.getVFS().exists(CPath))
+          continue;
+        GCNPath = CPath;
+      }
+      break;
+    }
+  }
+
+  // The directory names of GCN device libraries are the gfxnames.
+  // e.g. /opt/rocm/libamdgcn/gfx701
+  if (! GCNPath.empty()) {
+    auto &FS = D.getVFS();
+    std::error_code EC;
+    for (llvm::sys::fs::directory_iterator LI(GCNPath, EC), LE;
+         !EC && LI != LE; LI = LI.increment(EC)) {
+      StringRef Dirname = LI->path();
+      StringRef GCNname = Dirname.rsplit('/').second;
+      if(GCNname.startswith("gfx")) {
+        std::string OCLFilePath = Dirname.str() + "/lib/opencl.amdgcn.bc";
+        if (FS.exists(OCLFilePath))
+          LibDeviceMap[GCNname.str()] = OCLFilePath;
+      }
+      continue;
+    }
+  }
 }
 
 void CudaInstallationDetector::AddCudaIncludeArgs(
@@ -218,6 +261,105 @@ void CudaInstallationDetector::print(raw_ostream &OS) const {
        << CudaVersionToString(Version) << "\n";
 }
 
+void NVPTX::Backend::ConstructJob(Compilation &C, const JobAction &JA,
+                                     const InputInfo &Output,
+                                     const InputInfoList &Inputs,
+                                     const ArgList &Args,
+                                     const char *LinkingOutput) const {
+
+  assert(StringRef(JA.getOffloadingArch()).startswith("gfx") &&
+    " unless gfx processor, backend should be clang") ;
+
+  // For amdgcn the Backend Job will call 3.9 llvm-link & opt steps
+  ArgStringList CmdArgs;
+  // Add the input bc's created by compile step
+  for (InputInfoList::const_iterator
+       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    CmdArgs.push_back(II.getFilename());
+  }
+
+  std::string GFXNAME = JA.getOffloadingArch();
+
+  // Find in -L<path> and LIBRARY_PATH.
+  ArgStringList LibraryPaths;
+  for (auto Arg : Args) {
+    if (Arg->getSpelling() == "-L") {
+      std::string Current = "-L";
+      Current += Arg->getValue();
+      LibraryPaths.push_back(Args.MakeArgString(Current.c_str()));
+    }
+  }
+  addDirectoryList(Args, LibraryPaths, "-L", "LIBRARY_PATH");
+
+  const char * libamdgcn;
+  libamdgcn = getenv("LIBAMDGCN");
+  if (!libamdgcn) libamdgcn = "/opt/rocm/libamdgcn";
+  LibraryPaths.push_back(Args.MakeArgString(
+    "-L" + std::string(libamdgcn) + "/" + std::string(GFXNAME)  + "/lib"));
+
+  const char * hcc2 = getenv("HCC2");
+  if (!hcc2) hcc2 = "/opt/rocm/hcc2";
+  LibraryPaths.push_back(Args.MakeArgString( "-L" + std::string(hcc2) + 
+    "/lib/libdevice"));
+
+  addBCLib(C, Args, CmdArgs, LibraryPaths,
+    Args.MakeArgString("libomptarget-amdgcn-" + std::string(GFXNAME) + ".bc"));
+  addBCLib(C, Args, CmdArgs, LibraryPaths,
+    Args.MakeArgString("libicuda2gcn-" + std::string(GFXNAME)  + ".bc"));
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "cuda2gcn.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "opencl.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "ockl.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "irif.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "ocml.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_finite_only_off.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_daz_opt_off.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths,
+    "oclc_correctly_rounded_sqrt_on.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_unsafe_math_off.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "hc.amdgcn.bc");
+  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_isa_version.amdgcn.bc");
+
+  addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LINK_OPTS");
+  CmdArgs.push_back("-suppress-warnings");
+
+  // Add an intermediate output file which is input to opt
+  CmdArgs.push_back("-o");
+  std::string TmpName = C.getDriver().GetTemporaryPath("OPT_INPUT", "bc");
+  const char *ResultingBitcodeF = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+  CmdArgs.push_back(ResultingBitcodeF);
+  const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llvm-link");
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
+  ArgStringList OptArgs;
+  // The input to opt is the output from llvm-link
+  OptArgs.push_back(ResultingBitcodeF);
+  // Add CLANG_TARGETOPT_OPTS override options to opt
+  if (getenv("CLANG_TARGET_OPT_OPTS"))
+    addEnvListWithSpaces(Args, OptArgs, "CLANG_TARGET_OPT_OPTS");
+  else {
+    OptArgs.push_back(Args.MakeArgString("-O2"));
+    OptArgs.push_back("-S");
+    const char *mcpustr = Args.MakeArgString("-mcpu=" + GFXNAME);
+    OptArgs.push_back(mcpustr);
+    OptArgs.push_back("-dce");
+    OptArgs.push_back("-sroa");
+    OptArgs.push_back("-globaldce");
+  }
+  OptArgs.push_back("-o");
+  OptArgs.push_back(Output.getFilename());
+  const char *OptExec = Args.MakeArgString(C.getDriver().Dir + "/opt");
+  C.addCommand(llvm::make_unique<Command>(JA, *this, OptExec, OptArgs, Inputs ));
+
+  if (Args.hasArg(options::OPT_v)) {
+    ArgStringList nmArgs;
+    nmArgs.push_back(ResultingBitcodeF);
+    nmArgs.push_back("-debug-syms");
+    const char *nmExec = Args.MakeArgString(C.getDriver().Dir + "/llvm-nm");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, nmExec, nmArgs, Inputs ));
+  }
+}
+
 void NVPTX::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
@@ -225,7 +367,7 @@ void NVPTX::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                     const char *LinkingOutput) const {
   const auto &TC =
       static_cast<const toolchains::CudaToolChain &>(getToolChain());
-  assert(TC.getTriple().isNVPTX() && "Wrong platform");
+  assert(TC.getTriple().isGpu() && "Wrong platform");
 
   StringRef GPUArchName;
   // If this is an OpenMP action we need to extract the device architecture
@@ -241,6 +383,40 @@ void NVPTX::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   CudaArch gpu_arch = StringToCudaArch(GPUArchName);
   assert(gpu_arch != CudaArch::UNKNOWN &&
          "Device action expected to have an architecture.");
+
+  // For amdgcn this job will call llc  (Lightning Compiler)
+  if (StringRef(JA.getOffloadingArch()).startswith("gfx")) {
+    ArgStringList CmdArgs;
+    for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+      const InputInfo &II = *it;
+      CmdArgs.push_back(II.getFilename());
+    }
+    CmdArgs.push_back("-mtriple=amdgcn--cuda");
+    CmdArgs.push_back("-filetype=obj");
+    addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LLC_OPTS");
+    std::string GFXNAME = JA.getOffloadingArch();
+    CmdArgs.push_back(Args.MakeArgString("-mcpu=" + GFXNAME));
+    CmdArgs.push_back("-o");
+    std::string TmpName = C.getDriver().GetTemporaryPath("LC_OUTPUT", "o");
+    const char *llcOutputFile = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+    CmdArgs.push_back(llcOutputFile);
+    const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llc");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
+    ArgStringList CmdArgs2;
+    CmdArgs2.push_back("-flavor");
+    CmdArgs2.push_back("gnu");
+    CmdArgs2.push_back("--no-undefined");
+    CmdArgs2.push_back("-shared");
+    // The output from ld.lld is an HSA code object file
+    CmdArgs2.push_back("-o");
+    CmdArgs2.push_back(Output.getFilename());
+    CmdArgs2.push_back(llcOutputFile);
+    const char *Exec2 = Args.MakeArgString(C.getDriver().Dir + "/lld");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec2, CmdArgs2, Inputs));
+    return;
+  }
 
   // Check that our installation's ptxas supports gpu_arch.
   if (!Args.hasArg(options::OPT_no_cuda_version_check)) {
@@ -329,16 +505,35 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                  const char *LinkingOutput) const {
   const auto &TC =
       static_cast<const toolchains::CudaToolChain &>(getToolChain());
-  assert(TC.getTriple().isNVPTX() && "Wrong platform");
+  assert(TC.getTriple().isGpu() && "Wrong platform");
 
   ArgStringList CmdArgs;
   CmdArgs.push_back("--cuda");
   CmdArgs.push_back(TC.getTriple().isArch64Bit() ? "-64" : "-32");
   CmdArgs.push_back(Args.MakeArgString("--create"));
-  CmdArgs.push_back(Args.MakeArgString(Output.getFilename()));
+  bool found_gfx=false;
+  for (const auto& II : Inputs)
+    if(StringRef(II.getAction()->getOffloadingArch()).startswith("gfx"))
+      found_gfx=true;
+  const char *fbOutputFile ;
+  if (found_gfx) {
+    // If gfx, we need clang-fixup-fatbin, so intercept the fatbinary output
+    std::string TmpName = C.getDriver().GetTemporaryPath("FB_FIXUP", "fatbin");
+    fbOutputFile = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
+    CmdArgs.push_back(fbOutputFile);
+  } else
+    CmdArgs.push_back(Args.MakeArgString(Output.getFilename()));
 
   for (const auto& II : Inputs) {
     auto *A = II.getAction();
+    if(StringRef(A->getOffloadingArch()).startswith("gfx")) {
+      if (II.getType() != types::TY_PP_Asm) {
+        CmdArgs.push_back(Args.MakeArgString("--no-asm"));
+        // LIE to avoid unknown profile in fatbinary
+        CmdArgs.push_back(Args.MakeArgString(
+          llvm::Twine("--image=profile=sm_37,file=") + + II.getFilename()));
+      }
+    } else {
     assert(A->getInputs().size() == 1 &&
            "Device offload action is expected to have a single input");
     const char *gpu_arch_str = A->getOffloadingArch();
@@ -354,6 +549,7 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
             : gpu_arch_str;
     CmdArgs.push_back(Args.MakeArgString(llvm::Twine("--image=profile=") +
                                          Arch + ",file=" + II.getFilename()));
+    }
   }
 
   for (const auto& A : Args.getAllArgValues(options::OPT_Xcuda_fatbinary))
@@ -361,6 +557,30 @@ void NVPTX::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("fatbinary"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
+  if (found_gfx) {
+    std::string subarchs = "-offload-archs=";
+    bool first = true;
+    for (const auto& II : Inputs)
+      if (II.getType() != types::TY_PP_Asm) {
+        if (first) {
+          subarchs = subarchs +
+            StringRef(II.getAction()->getOffloadingArch()).str();
+          first = false ;
+        } else {
+          subarchs = subarchs + "," +
+            StringRef(II.getAction()->getOffloadingArch()).str();
+        }
+      }
+    ArgStringList CmdArgs2;
+    CmdArgs2.push_back(Args.MakeArgString(subarchs));
+    CmdArgs2.push_back(fbOutputFile);
+    CmdArgs2.push_back(Args.MakeArgString(Output.getFilename()));
+    const char *Exec2 = Args.MakeArgString(C.getDriver().Dir +
+      "/clang-fixup-fatbin");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec2,
+      CmdArgs2, Inputs));
+  }
 }
 
 void NVPTX::OpenMPLinker::ConstructJob(Compilation &C, const JobAction &JA,
@@ -490,6 +710,12 @@ void CudaToolChain::addClangTargetOptions(
     return;
   }
 
+  // Do not add -link-cuda-bitcode or ptx42 features if gfx
+  for (Arg *A : DriverArgs)
+    if( A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) &&
+        StringRef(A->getValue()).startswith("gfx") )
+      return;
+
   CC1Args.push_back("-mlink-cuda-bitcode");
   CC1Args.push_back(DriverArgs.MakeArgString(LibDeviceFile));
 
@@ -591,6 +817,10 @@ CudaToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
     DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), BoundArch);
   }
   return DAL;
+}
+
+Tool *CudaToolChain::buildBackend() const {
+  return new tools::NVPTX::Backend(*this);
 }
 
 Tool *CudaToolChain::buildAssembler() const {

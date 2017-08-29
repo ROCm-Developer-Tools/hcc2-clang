@@ -20,7 +20,6 @@
 #include "clang/AST/Stmt.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/SourceLocation.h"
-#include "llvm/ADT/MapVector.h"
 
 namespace clang {
 
@@ -77,17 +76,15 @@ class OMPClauseWithPreInit {
   friend class OMPClauseReader;
   /// Pre-initialization statement for the clause.
   Stmt *PreInit;
-  /// Region that captures the associated stmt.
   OpenMPDirectiveKind CaptureRegion;
-
 protected:
   /// Set pre-initialization statement for the clause.
-  void setPreInitStmt(Stmt *S, OpenMPDirectiveKind ThisRegion = OMPD_unknown) {
-    PreInit = S;
+  void setPreInitStmt(Stmt *S, OpenMPDirectiveKind ThisRegion = OMPD_unknown)
+  { 
+    PreInit = S; 
     CaptureRegion = ThisRegion;
   }
-  OMPClauseWithPreInit(const OMPClause *This)
-      : PreInit(nullptr), CaptureRegion(OMPD_unknown) {
+  OMPClauseWithPreInit(const OMPClause *This) : PreInit(nullptr) {
     assert(get(This) && "get is not tuned for pre-init.");
   }
 
@@ -96,7 +93,7 @@ public:
   const Stmt *getPreInitStmt() const { return PreInit; }
   /// Get pre-initialization statement for the clause.
   Stmt *getPreInitStmt() { return PreInit; }
-  /// Get capture region for the stmt in the clause.
+ /// Get capture region for the stmt in the clause.
   OpenMPDirectiveKind getCaptureRegion() { return CaptureRegion; }
   static OMPClauseWithPreInit *get(OMPClause *C);
   static const OMPClauseWithPreInit *get(const OMPClause *C);
@@ -235,9 +232,7 @@ public:
   ///
   /// \param NameModifier [OpenMP 4.1] Directive name modifier of clause.
   /// \param Cond Condition of the clause.
-  /// \param HelperCond Helper condition for the clause.
-  /// \param CaptureRegion Innermost OpenMP region where expressions in this
-  /// clause must be captured.
+  /// \param HelperCond Helper condition for combined directives.
   /// \param StartLoc Starting location of the clause.
   /// \param LParenLoc Location of '('.
   /// \param NameModifierLoc Location of directive name modifier.
@@ -245,13 +240,13 @@ public:
   /// \param EndLoc Ending location of the clause.
   ///
   OMPIfClause(OpenMPDirectiveKind NameModifier, Expr *Cond, Stmt *HelperCond,
-              OpenMPDirectiveKind CaptureRegion, SourceLocation StartLoc,
-              SourceLocation LParenLoc, SourceLocation NameModifierLoc,
-              SourceLocation ColonLoc, SourceLocation EndLoc)
+              SourceLocation StartLoc, SourceLocation LParenLoc,
+              SourceLocation NameModifierLoc, SourceLocation ColonLoc,
+              SourceLocation EndLoc)
       : OMPClause(OMPC_if, StartLoc, EndLoc), OMPClauseWithPreInit(this),
         LParenLoc(LParenLoc), Condition(Cond), ColonLoc(ColonLoc),
         NameModifier(NameModifier), NameModifierLoc(NameModifierLoc) {
-    setPreInitStmt(HelperCond, CaptureRegion);
+    setPreInitStmt(HelperCond);
   }
 
   /// \brief Build an empty clause.
@@ -361,21 +356,18 @@ public:
   /// \brief Build 'num_threads' clause with condition \a NumThreads.
   ///
   /// \param NumThreads Number of threads for the construct.
-  /// \param HelperNumThreads Helper Number of threads for the construct.
-  /// \param CaptureRegion Innermost OpenMP region where expressions in this
-  /// clause must be captured.
+  /// \param HelperNumThreads Helper number of threads for combined directives.
   /// \param StartLoc Starting location of the clause.
   /// \param LParenLoc Location of '('.
   /// \param EndLoc Ending location of the clause.
   ///
   OMPNumThreadsClause(Expr *NumThreads, Stmt *HelperNumThreads,
-                      OpenMPDirectiveKind CaptureRegion,
                       SourceLocation StartLoc, SourceLocation LParenLoc,
                       SourceLocation EndLoc)
       : OMPClause(OMPC_num_threads, StartLoc, EndLoc),
         OMPClauseWithPreInit(this), LParenLoc(LParenLoc),
         NumThreads(NumThreads) {
-    setPreInitStmt(HelperNumThreads, CaptureRegion);
+    setPreInitStmt(HelperNumThreads);
   }
 
   /// \brief Build an empty clause.
@@ -1890,449 +1882,6 @@ public:
   }
 };
 
-/// This represents clause 'task_reduction' in the '#pragma omp taskgroup'
-/// directives.
-///
-/// \code
-/// #pragma omp taskgroup task_reduction(+:a,b)
-/// \endcode
-/// In this example directive '#pragma omp taskgroup' has clause
-/// 'task_reduction' with operator '+' and the variables 'a' and 'b'.
-///
-class OMPTaskReductionClause final
-    : public OMPVarListClause<OMPTaskReductionClause>,
-      public OMPClauseWithPostUpdate,
-      private llvm::TrailingObjects<OMPTaskReductionClause, Expr *> {
-  friend TrailingObjects;
-  friend OMPVarListClause;
-  friend class OMPClauseReader;
-  /// Location of ':'.
-  SourceLocation ColonLoc;
-  /// Nested name specifier for C++.
-  NestedNameSpecifierLoc QualifierLoc;
-  /// Name of custom operator.
-  DeclarationNameInfo NameInfo;
-
-  /// Build clause with number of variables \a N.
-  ///
-  /// \param StartLoc Starting location of the clause.
-  /// \param LParenLoc Location of '('.
-  /// \param EndLoc Ending location of the clause.
-  /// \param ColonLoc Location of ':'.
-  /// \param N Number of the variables in the clause.
-  /// \param QualifierLoc The nested-name qualifier with location information
-  /// \param NameInfo The full name info for reduction identifier.
-  ///
-  OMPTaskReductionClause(SourceLocation StartLoc, SourceLocation LParenLoc,
-                         SourceLocation ColonLoc, SourceLocation EndLoc,
-                         unsigned N, NestedNameSpecifierLoc QualifierLoc,
-                         const DeclarationNameInfo &NameInfo)
-      : OMPVarListClause<OMPTaskReductionClause>(OMPC_task_reduction, StartLoc,
-                                                 LParenLoc, EndLoc, N),
-        OMPClauseWithPostUpdate(this), ColonLoc(ColonLoc),
-        QualifierLoc(QualifierLoc), NameInfo(NameInfo) {}
-
-  /// Build an empty clause.
-  ///
-  /// \param N Number of variables.
-  ///
-  explicit OMPTaskReductionClause(unsigned N)
-      : OMPVarListClause<OMPTaskReductionClause>(
-            OMPC_task_reduction, SourceLocation(), SourceLocation(),
-            SourceLocation(), N),
-        OMPClauseWithPostUpdate(this), ColonLoc(), QualifierLoc(), NameInfo() {}
-
-  /// Sets location of ':' symbol in clause.
-  void setColonLoc(SourceLocation CL) { ColonLoc = CL; }
-  /// Sets the name info for specified reduction identifier.
-  void setNameInfo(DeclarationNameInfo DNI) { NameInfo = DNI; }
-  /// Sets the nested name specifier.
-  void setQualifierLoc(NestedNameSpecifierLoc NSL) { QualifierLoc = NSL; }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent private copy of the reduction variable.
-  void setPrivates(ArrayRef<Expr *> Privates);
-
-  /// Get the list of helper privates.
-  MutableArrayRef<Expr *> getPrivates() {
-    return MutableArrayRef<Expr *>(varlist_end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getPrivates() const {
-    return llvm::makeArrayRef(varlist_end(), varlist_size());
-  }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent LHS expression in the final reduction
-  /// expression performed by the reduction clause.
-  void setLHSExprs(ArrayRef<Expr *> LHSExprs);
-
-  /// Get the list of helper LHS expressions.
-  MutableArrayRef<Expr *> getLHSExprs() {
-    return MutableArrayRef<Expr *>(getPrivates().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getLHSExprs() const {
-    return llvm::makeArrayRef(getPrivates().end(), varlist_size());
-  }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent RHS expression in the final reduction
-  /// expression performed by the reduction clause. Also, variables in these
-  /// expressions are used for proper initialization of reduction copies.
-  void setRHSExprs(ArrayRef<Expr *> RHSExprs);
-
-  ///  Get the list of helper destination expressions.
-  MutableArrayRef<Expr *> getRHSExprs() {
-    return MutableArrayRef<Expr *>(getLHSExprs().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getRHSExprs() const {
-    return llvm::makeArrayRef(getLHSExprs().end(), varlist_size());
-  }
-
-  /// Set list of helper reduction expressions, required for proper
-  /// codegen of the clause. These expressions are binary expressions or
-  /// operator/custom reduction call that calculates new value from source
-  /// helper expressions to destination helper expressions.
-  void setReductionOps(ArrayRef<Expr *> ReductionOps);
-
-  ///  Get the list of helper reduction expressions.
-  MutableArrayRef<Expr *> getReductionOps() {
-    return MutableArrayRef<Expr *>(getRHSExprs().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getReductionOps() const {
-    return llvm::makeArrayRef(getRHSExprs().end(), varlist_size());
-  }
-
-public:
-  /// Creates clause with a list of variables \a VL.
-  ///
-  /// \param StartLoc Starting location of the clause.
-  /// \param LParenLoc Location of '('.
-  /// \param ColonLoc Location of ':'.
-  /// \param EndLoc Ending location of the clause.
-  /// \param VL The variables in the clause.
-  /// \param QualifierLoc The nested-name qualifier with location information
-  /// \param NameInfo The full name info for reduction identifier.
-  /// \param Privates List of helper expressions for proper generation of
-  /// private copies.
-  /// \param LHSExprs List of helper expressions for proper generation of
-  /// assignment operation required for copyprivate clause. This list represents
-  /// LHSs of the reduction expressions.
-  /// \param RHSExprs List of helper expressions for proper generation of
-  /// assignment operation required for copyprivate clause. This list represents
-  /// RHSs of the reduction expressions.
-  /// Also, variables in these expressions are used for proper initialization of
-  /// reduction copies.
-  /// \param ReductionOps List of helper expressions that represents reduction
-  /// expressions:
-  /// \code
-  /// LHSExprs binop RHSExprs;
-  /// operator binop(LHSExpr, RHSExpr);
-  /// <CutomReduction>(LHSExpr, RHSExpr);
-  /// \endcode
-  /// Required for proper codegen of final reduction operation performed by the
-  /// reduction clause.
-  /// \param PreInit Statement that must be executed before entering the OpenMP
-  /// region with this clause.
-  /// \param PostUpdate Expression that must be executed after exit from the
-  /// OpenMP region with this clause.
-  ///
-  static OMPTaskReductionClause *
-  Create(const ASTContext &C, SourceLocation StartLoc, SourceLocation LParenLoc,
-         SourceLocation ColonLoc, SourceLocation EndLoc, ArrayRef<Expr *> VL,
-         NestedNameSpecifierLoc QualifierLoc,
-         const DeclarationNameInfo &NameInfo, ArrayRef<Expr *> Privates,
-         ArrayRef<Expr *> LHSExprs, ArrayRef<Expr *> RHSExprs,
-         ArrayRef<Expr *> ReductionOps, Stmt *PreInit, Expr *PostUpdate);
-
-  /// Creates an empty clause with the place for \a N variables.
-  ///
-  /// \param C AST context.
-  /// \param N The number of variables.
-  ///
-  static OMPTaskReductionClause *CreateEmpty(const ASTContext &C, unsigned N);
-
-  /// Gets location of ':' symbol in clause.
-  SourceLocation getColonLoc() const { return ColonLoc; }
-  /// Gets the name info for specified reduction identifier.
-  const DeclarationNameInfo &getNameInfo() const { return NameInfo; }
-  /// Gets the nested name specifier.
-  NestedNameSpecifierLoc getQualifierLoc() const { return QualifierLoc; }
-
-  typedef MutableArrayRef<Expr *>::iterator helper_expr_iterator;
-  typedef ArrayRef<const Expr *>::iterator helper_expr_const_iterator;
-  typedef llvm::iterator_range<helper_expr_iterator> helper_expr_range;
-  typedef llvm::iterator_range<helper_expr_const_iterator>
-      helper_expr_const_range;
-
-  helper_expr_const_range privates() const {
-    return helper_expr_const_range(getPrivates().begin(), getPrivates().end());
-  }
-  helper_expr_range privates() {
-    return helper_expr_range(getPrivates().begin(), getPrivates().end());
-  }
-  helper_expr_const_range lhs_exprs() const {
-    return helper_expr_const_range(getLHSExprs().begin(), getLHSExprs().end());
-  }
-  helper_expr_range lhs_exprs() {
-    return helper_expr_range(getLHSExprs().begin(), getLHSExprs().end());
-  }
-  helper_expr_const_range rhs_exprs() const {
-    return helper_expr_const_range(getRHSExprs().begin(), getRHSExprs().end());
-  }
-  helper_expr_range rhs_exprs() {
-    return helper_expr_range(getRHSExprs().begin(), getRHSExprs().end());
-  }
-  helper_expr_const_range reduction_ops() const {
-    return helper_expr_const_range(getReductionOps().begin(),
-                                   getReductionOps().end());
-  }
-  helper_expr_range reduction_ops() {
-    return helper_expr_range(getReductionOps().begin(),
-                             getReductionOps().end());
-  }
-
-  child_range children() {
-    return child_range(reinterpret_cast<Stmt **>(varlist_begin()),
-                       reinterpret_cast<Stmt **>(varlist_end()));
-  }
-
-  static bool classof(const OMPClause *T) {
-    return T->getClauseKind() == OMPC_task_reduction;
-  }
-};
-
-/// This represents clause 'in_reduction' in the '#pragma omp task' directives.
-///
-/// \code
-/// #pragma omp task in_reduction(+:a,b)
-/// \endcode
-/// In this example directive '#pragma omp task' has clause 'in_reduction' with
-/// operator '+' and the variables 'a' and 'b'.
-///
-class OMPInReductionClause final
-    : public OMPVarListClause<OMPInReductionClause>,
-      public OMPClauseWithPostUpdate,
-      private llvm::TrailingObjects<OMPInReductionClause, Expr *> {
-  friend TrailingObjects;
-  friend OMPVarListClause;
-  friend class OMPClauseReader;
-  /// Location of ':'.
-  SourceLocation ColonLoc;
-  /// Nested name specifier for C++.
-  NestedNameSpecifierLoc QualifierLoc;
-  /// Name of custom operator.
-  DeclarationNameInfo NameInfo;
-
-  /// Build clause with number of variables \a N.
-  ///
-  /// \param StartLoc Starting location of the clause.
-  /// \param LParenLoc Location of '('.
-  /// \param EndLoc Ending location of the clause.
-  /// \param ColonLoc Location of ':'.
-  /// \param N Number of the variables in the clause.
-  /// \param QualifierLoc The nested-name qualifier with location information
-  /// \param NameInfo The full name info for reduction identifier.
-  ///
-  OMPInReductionClause(SourceLocation StartLoc, SourceLocation LParenLoc,
-                       SourceLocation ColonLoc, SourceLocation EndLoc,
-                       unsigned N, NestedNameSpecifierLoc QualifierLoc,
-                       const DeclarationNameInfo &NameInfo)
-      : OMPVarListClause<OMPInReductionClause>(OMPC_in_reduction, StartLoc,
-                                               LParenLoc, EndLoc, N),
-        OMPClauseWithPostUpdate(this), ColonLoc(ColonLoc),
-        QualifierLoc(QualifierLoc), NameInfo(NameInfo) {}
-
-  /// Build an empty clause.
-  ///
-  /// \param N Number of variables.
-  ///
-  explicit OMPInReductionClause(unsigned N)
-      : OMPVarListClause<OMPInReductionClause>(
-            OMPC_in_reduction, SourceLocation(), SourceLocation(),
-            SourceLocation(), N),
-        OMPClauseWithPostUpdate(this), ColonLoc(), QualifierLoc(), NameInfo() {}
-
-  /// Sets location of ':' symbol in clause.
-  void setColonLoc(SourceLocation CL) { ColonLoc = CL; }
-  /// Sets the name info for specified reduction identifier.
-  void setNameInfo(DeclarationNameInfo DNI) { NameInfo = DNI; }
-  /// Sets the nested name specifier.
-  void setQualifierLoc(NestedNameSpecifierLoc NSL) { QualifierLoc = NSL; }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent private copy of the reduction variable.
-  void setPrivates(ArrayRef<Expr *> Privates);
-
-  /// Get the list of helper privates.
-  MutableArrayRef<Expr *> getPrivates() {
-    return MutableArrayRef<Expr *>(varlist_end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getPrivates() const {
-    return llvm::makeArrayRef(varlist_end(), varlist_size());
-  }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent LHS expression in the final reduction
-  /// expression performed by the reduction clause.
-  void setLHSExprs(ArrayRef<Expr *> LHSExprs);
-
-  /// Get the list of helper LHS expressions.
-  MutableArrayRef<Expr *> getLHSExprs() {
-    return MutableArrayRef<Expr *>(getPrivates().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getLHSExprs() const {
-    return llvm::makeArrayRef(getPrivates().end(), varlist_size());
-  }
-
-  /// Set list of helper expressions, required for proper codegen of the clause.
-  /// These expressions represent RHS expression in the final reduction
-  /// expression performed by the reduction clause. Also, variables in these
-  /// expressions are used for proper initialization of reduction copies.
-  void setRHSExprs(ArrayRef<Expr *> RHSExprs);
-
-  ///  Get the list of helper destination expressions.
-  MutableArrayRef<Expr *> getRHSExprs() {
-    return MutableArrayRef<Expr *>(getLHSExprs().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getRHSExprs() const {
-    return llvm::makeArrayRef(getLHSExprs().end(), varlist_size());
-  }
-
-  /// Set list of helper reduction expressions, required for proper
-  /// codegen of the clause. These expressions are binary expressions or
-  /// operator/custom reduction call that calculates new value from source
-  /// helper expressions to destination helper expressions.
-  void setReductionOps(ArrayRef<Expr *> ReductionOps);
-
-  ///  Get the list of helper reduction expressions.
-  MutableArrayRef<Expr *> getReductionOps() {
-    return MutableArrayRef<Expr *>(getRHSExprs().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getReductionOps() const {
-    return llvm::makeArrayRef(getRHSExprs().end(), varlist_size());
-  }
-
-  /// Set list of helper reduction taskgroup descriptors.
-  void setTaskgroupDescriptors(ArrayRef<Expr *> ReductionOps);
-
-  ///  Get the list of helper reduction taskgroup descriptors.
-  MutableArrayRef<Expr *> getTaskgroupDescriptors() {
-    return MutableArrayRef<Expr *>(getReductionOps().end(), varlist_size());
-  }
-  ArrayRef<const Expr *> getTaskgroupDescriptors() const {
-    return llvm::makeArrayRef(getReductionOps().end(), varlist_size());
-  }
-
-public:
-  /// Creates clause with a list of variables \a VL.
-  ///
-  /// \param StartLoc Starting location of the clause.
-  /// \param LParenLoc Location of '('.
-  /// \param ColonLoc Location of ':'.
-  /// \param EndLoc Ending location of the clause.
-  /// \param VL The variables in the clause.
-  /// \param QualifierLoc The nested-name qualifier with location information
-  /// \param NameInfo The full name info for reduction identifier.
-  /// \param Privates List of helper expressions for proper generation of
-  /// private copies.
-  /// \param LHSExprs List of helper expressions for proper generation of
-  /// assignment operation required for copyprivate clause. This list represents
-  /// LHSs of the reduction expressions.
-  /// \param RHSExprs List of helper expressions for proper generation of
-  /// assignment operation required for copyprivate clause. This list represents
-  /// RHSs of the reduction expressions.
-  /// Also, variables in these expressions are used for proper initialization of
-  /// reduction copies.
-  /// \param ReductionOps List of helper expressions that represents reduction
-  /// expressions:
-  /// \code
-  /// LHSExprs binop RHSExprs;
-  /// operator binop(LHSExpr, RHSExpr);
-  /// <CutomReduction>(LHSExpr, RHSExpr);
-  /// \endcode
-  /// Required for proper codegen of final reduction operation performed by the
-  /// reduction clause.
-  /// \param TaskgroupDescriptors List of helper taskgroup descriptors for
-  /// corresponding items in parent taskgroup task_reduction clause.
-  /// \param PreInit Statement that must be executed before entering the OpenMP
-  /// region with this clause.
-  /// \param PostUpdate Expression that must be executed after exit from the
-  /// OpenMP region with this clause.
-  ///
-  static OMPInReductionClause *
-  Create(const ASTContext &C, SourceLocation StartLoc, SourceLocation LParenLoc,
-         SourceLocation ColonLoc, SourceLocation EndLoc, ArrayRef<Expr *> VL,
-         NestedNameSpecifierLoc QualifierLoc,
-         const DeclarationNameInfo &NameInfo, ArrayRef<Expr *> Privates,
-         ArrayRef<Expr *> LHSExprs, ArrayRef<Expr *> RHSExprs,
-         ArrayRef<Expr *> ReductionOps, ArrayRef<Expr *> TaskgroupDescriptors,
-         Stmt *PreInit, Expr *PostUpdate);
-
-  /// Creates an empty clause with the place for \a N variables.
-  ///
-  /// \param C AST context.
-  /// \param N The number of variables.
-  ///
-  static OMPInReductionClause *CreateEmpty(const ASTContext &C, unsigned N);
-
-  /// Gets location of ':' symbol in clause.
-  SourceLocation getColonLoc() const { return ColonLoc; }
-  /// Gets the name info for specified reduction identifier.
-  const DeclarationNameInfo &getNameInfo() const { return NameInfo; }
-  /// Gets the nested name specifier.
-  NestedNameSpecifierLoc getQualifierLoc() const { return QualifierLoc; }
-
-  typedef MutableArrayRef<Expr *>::iterator helper_expr_iterator;
-  typedef ArrayRef<const Expr *>::iterator helper_expr_const_iterator;
-  typedef llvm::iterator_range<helper_expr_iterator> helper_expr_range;
-  typedef llvm::iterator_range<helper_expr_const_iterator>
-      helper_expr_const_range;
-
-  helper_expr_const_range privates() const {
-    return helper_expr_const_range(getPrivates().begin(), getPrivates().end());
-  }
-  helper_expr_range privates() {
-    return helper_expr_range(getPrivates().begin(), getPrivates().end());
-  }
-  helper_expr_const_range lhs_exprs() const {
-    return helper_expr_const_range(getLHSExprs().begin(), getLHSExprs().end());
-  }
-  helper_expr_range lhs_exprs() {
-    return helper_expr_range(getLHSExprs().begin(), getLHSExprs().end());
-  }
-  helper_expr_const_range rhs_exprs() const {
-    return helper_expr_const_range(getRHSExprs().begin(), getRHSExprs().end());
-  }
-  helper_expr_range rhs_exprs() {
-    return helper_expr_range(getRHSExprs().begin(), getRHSExprs().end());
-  }
-  helper_expr_const_range reduction_ops() const {
-    return helper_expr_const_range(getReductionOps().begin(),
-                                   getReductionOps().end());
-  }
-  helper_expr_range reduction_ops() {
-    return helper_expr_range(getReductionOps().begin(),
-                             getReductionOps().end());
-  }
-  helper_expr_const_range taskgroup_descriptors() const {
-    return helper_expr_const_range(getTaskgroupDescriptors().begin(),
-                                   getTaskgroupDescriptors().end());
-  }
-  helper_expr_range taskgroup_descriptors() {
-    return helper_expr_range(getTaskgroupDescriptors().begin(),
-                             getTaskgroupDescriptors().end());
-  }
-
-  child_range children() {
-    return child_range(reinterpret_cast<Stmt **>(varlist_begin()),
-                       reinterpret_cast<Stmt **>(varlist_end()));
-  }
-
-  static bool classof(const OMPClause *T) {
-    return T->getClauseKind() == OMPC_in_reduction;
-  }
-};
-
 /// \brief This represents clause 'linear' in the '#pragma omp ...'
 /// directives.
 ///
@@ -3445,7 +2994,7 @@ protected:
     // Organize the components by declaration and retrieve the original
     // expression. Original expressions are always the first component of the
     // mappable component list.
-    llvm::MapVector<ValueDecl *, SmallVector<MappableExprComponentListRef, 8>>
+    llvm::DenseMap<ValueDecl *, SmallVector<MappableExprComponentListRef, 8>>
         ComponentListMap;
     {
       auto CI = ComponentLists.begin();
@@ -3939,19 +3488,15 @@ public:
   /// \brief Build 'num_teams' clause.
   ///
   /// \param E Expression associated with this clause.
-  /// \param HelperE Helper Expression associated with this clause.
-  /// \param CaptureRegion Innermost OpenMP region where expressions in this
-  /// clause must be captured.
   /// \param StartLoc Starting location of the clause.
   /// \param LParenLoc Location of '('.
   /// \param EndLoc Ending location of the clause.
   ///
-  OMPNumTeamsClause(Expr *E, Stmt *HelperE, OpenMPDirectiveKind CaptureRegion,
-                    SourceLocation StartLoc, SourceLocation LParenLoc,
-                    SourceLocation EndLoc)
+  OMPNumTeamsClause(Expr *E, Stmt *HelperE, SourceLocation StartLoc,
+                    SourceLocation LParenLoc, SourceLocation EndLoc)
       : OMPClause(OMPC_num_teams, StartLoc, EndLoc), OMPClauseWithPreInit(this),
         LParenLoc(LParenLoc), NumTeams(E) {
-    setPreInitStmt(HelperE, CaptureRegion);
+    setPreInitStmt(HelperE);
   }
 
   /// \brief Build an empty clause.
@@ -4001,20 +3546,15 @@ public:
   /// \brief Build 'thread_limit' clause.
   ///
   /// \param E Expression associated with this clause.
-  /// \param HelperE Helper Expression associated with this clause.
-  /// \param CaptureRegion Innermost OpenMP region where expressions in this
-  /// clause must be captured.
   /// \param StartLoc Starting location of the clause.
   /// \param LParenLoc Location of '('.
   /// \param EndLoc Ending location of the clause.
   ///
-  OMPThreadLimitClause(Expr *E, Stmt *HelperE,
-                       OpenMPDirectiveKind CaptureRegion,
-                       SourceLocation StartLoc, SourceLocation LParenLoc,
-                       SourceLocation EndLoc)
+  OMPThreadLimitClause(Expr *E, Stmt *HelperE, SourceLocation StartLoc,
+                       SourceLocation LParenLoc, SourceLocation EndLoc)
       : OMPClause(OMPC_thread_limit, StartLoc, EndLoc),
         OMPClauseWithPreInit(this), LParenLoc(LParenLoc), ThreadLimit(E) {
-    setPreInitStmt(HelperE, CaptureRegion);
+    setPreInitStmt(HelperE);
   }
 
   /// \brief Build an empty clause.

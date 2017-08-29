@@ -17,6 +17,7 @@
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/MacroBuilder.h"
 #include "clang/Basic/TargetBuiltins.h"
+#include "clang/Basic/GpuGridValues.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -336,6 +337,10 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
                       : DataLayoutStringR600);
   assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
+  GCN_Subarch = CudaArch::GFX803; /*default to Fiji */
+  GridValues = (const int*) &(AMDGPUGpuGridValues[0]);
+  LongGridValues = (const long long *) &(AMDGPUGpuLongGridValues[0]);
+
   setAddressSpaceMap(Triple.getOS() == llvm::Triple::Mesa3D ||
                      Triple.getEnvironment() == llvm::Triple::OpenCL ||
                      Triple.getEnvironmentName() == "amdgizcl" ||
@@ -438,4 +443,40 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__HAS_LDEXPF__");
   if (hasFP64)
     Builder.defineMacro("__HAS_FP64__");
+
+  if(getTriple().getOS() == llvm::Triple::CUDA) {
+    // Set __CUDA_ARCH__ for the GPU specified.
+    std::string CUDAArchCode = [this] {
+      switch (GCN_Subarch) {
+      case CudaArch::UNKNOWN:
+        assert(false && "No GPU arch when compiling CUDA device code.");
+        return "";
+      case CudaArch::SM_20: return "200";
+      case CudaArch::SM_21: return "210";
+      case CudaArch::SM_30: return "300";
+      case CudaArch::SM_32: return "320";
+      case CudaArch::SM_35: return "350";
+      case CudaArch::SM_37: return "370";
+      case CudaArch::SM_50: return "500";
+      case CudaArch::SM_52: return "520";
+      case CudaArch::SM_53: return "530";
+      case CudaArch::SM_60: return "600";
+      case CudaArch::SM_61: return "610";
+      case CudaArch::SM_62: return "620";
+      case CudaArch::GFX700: return "700";
+      case CudaArch::GFX701: return "701";
+      case CudaArch::GFX800: return "800";
+      case CudaArch::GFX801: return "801";
+      case CudaArch::GFX802: return "802";
+      case CudaArch::GFX803: return "803";
+      case CudaArch::GFX810: return "810";
+      case CudaArch::GFX900: return "900";
+      case CudaArch::GFX901: return "901";
+      }
+      llvm_unreachable("unhandled CudaArch");
+    }();
+    // Set __CUDA_ARCH__ for the GPU specified.
+    Builder.defineMacro("__CUDA_ARCH__", CUDAArchCode);
+  }
+
 }

@@ -8430,6 +8430,7 @@ TreeTransform<Derived>::TransformOMPReductionClause(OMPReductionClause *C) {
       C->getLocEnd(), ReductionIdScopeSpec, NameInfo, UnresolvedReductions);
 }
 
+#if 0
 template <typename Derived>
 OMPClause *TreeTransform<Derived>::TransformOMPTaskReductionClause(
     OMPTaskReductionClause *C) {
@@ -8519,6 +8520,7 @@ TreeTransform<Derived>::TransformOMPInReductionClause(OMPInReductionClause *C) {
       Vars, C->getLocStart(), C->getLParenLoc(), C->getColonLoc(),
       C->getLocEnd(), ReductionIdScopeSpec, NameInfo, UnresolvedReductions);
 }
+#endif
 
 template <typename Derived>
 OMPClause *

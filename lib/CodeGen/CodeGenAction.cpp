@@ -233,9 +233,9 @@ namespace clang {
         Ctx.setDiagnosticsHotnessThreshold(
             CodeGenOpts.DiagnosticsHotnessThreshold);
 
-      PerformPrelinkPasses(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
-                           LangOpts, C.getTargetInfo().getDataLayout(),
-                           getModule(), Action);
+      //PerformPrelinkPasses(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
+      //                     LangOpts, C.getTargetInfo().getDataLayout(),
+      //                     getModule(), Action);
 
       std::unique_ptr<llvm::tool_output_file> OptRecordFile;
       if (!CodeGenOpts.OptRecordFile.empty()) {

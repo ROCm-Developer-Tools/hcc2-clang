@@ -1668,6 +1668,11 @@ ExprResult Sema::BuildLambdaExpr(SourceLocation StartLoc, SourceLocation EndLoc,
     DeclareAMPDeserializer(Class, NULL);
   }
 
+  // C++AMP
+  if (getLangOpts().CPlusPlusAMP && NeedAMPDeserializer(Class)) {
+    DeclareAMPDeserializer(Class, NULL);
+  }
+
   LambdaExpr *Lambda = LambdaExpr::Create(Context, Class, IntroducerRange, 
                                           CaptureDefault, CaptureDefaultLoc,
                                           Captures, 

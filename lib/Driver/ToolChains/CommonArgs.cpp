@@ -200,7 +200,9 @@ void tools::AddTargetFeature(const ArgList &Args,
 
 /// Get the (LLVM) name of the R600 gpu we are targeting.
 static std::string getR600TargetGPU(const ArgList &Args) {
-  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
+  Arg*A;
+  if ( (A = Args.getLastArg(options::OPT_mcpu_EQ)) ||
+       (A = Args.getLastArg(options::OPT_march_EQ)) ) {
     const char *GPUName = A->getValue();
     return llvm::StringSwitch<const char *>(GPUName)
         .Cases("rv630", "rv635", "r600")
@@ -1017,6 +1019,39 @@ void tools::AddRunTimeLibs(const ToolChain &TC, const Driver &D,
   }
 }
 
+void tools::addBCLib(Compilation &C, const ArgList &Args,
+  ArgStringList &CmdArgs, ArgStringList LibraryPaths, const char *BCName) {
+  std::string FullName;
+  bool FoundLibDevice = false;
+  for (std::string LibraryPath : LibraryPaths) {
+    LibraryPath = LibraryPath.substr(2, LibraryPath.length() - 2); // -L
+    FullName = Args.MakeArgString(LibraryPath + "/" + BCName );
+    if (llvm::sys::fs::exists( FullName.c_str())) {
+      FoundLibDevice = true;
+      break;
+    }
+  }
+  if (!FoundLibDevice)
+    C.getDriver().Diag(diag::err_drv_no_such_file) << BCName ;
+  CmdArgs.push_back(Args.MakeArgString(FullName));
+}
+
+void tools::addEnvListWithSpaces(const ArgList &Args, ArgStringList &CmdArgs,
+  const char *EnvVar) {
+  const char *DirList = ::getenv(EnvVar);
+  if (!DirList) return;
+  StringRef Dirs(DirList);
+  if (Dirs.empty()) return;
+  StringRef::size_type Delim;
+  while ((Delim = Dirs.find(" ")) != StringRef::npos) {
+    if (Delim != 0)
+      CmdArgs.push_back(Args.MakeArgString(Dirs.substr(0, Delim)));
+    Dirs = Dirs.substr(Delim + 1); // Trim front space
+  }
+  if (!Dirs.empty())  // Last arg may have no spaces
+      CmdArgs.push_back(Args.MakeArgString(Dirs));
+}
+
 /// Add OpenMP linker script arguments at the end of the argument list so that
 /// the fat binary is built by embedding each of the device images into the
 /// host. The linker script also defines a few symbols required by the code
@@ -1092,20 +1127,20 @@ void tools::AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
 
   LksStream << "SECTIONS\n";
   LksStream << "{\n";
+  LksStream << "  .omp_offloading :\n";
+  LksStream << "  ALIGN(0x10)\n";
+  LksStream << "  {\n";
 
-  // Put each target binary into a separate section.
-  for (const auto &BI : InputBinaryInfo) {
-    LksStream << "  .omp_offloading." << BI.first << " :\n";
-    LksStream << "  ALIGN(0x10)\n";
-    LksStream << "  {\n";
+  for (auto &BI : InputBinaryInfo) {
+    LksStream << "    . = ALIGN(0x10);\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_start." << BI.first
               << " = .);\n";
     LksStream << "    " << BI.second << "\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_end." << BI.first
               << " = .);\n";
-    LksStream << "  }\n";
   }
 
+  LksStream << "  }\n";
   // Add commands to define host entries begin and end. We use 1-byte subalign
   // so that the linker does not add any padding and the elements in this
   // section form an array.

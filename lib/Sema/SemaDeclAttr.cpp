@@ -4115,7 +4115,7 @@ static void handleConstantAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   D->addAttr(::new (S.Context) CUDAConstantAttr(
       Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
 }
-
+#if 0
 static void handleSharedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (checkAttrMutualExclusion<CUDAConstantAttr>(S, D, Attr.getRange(),
                                                  Attr.getName()))
@@ -4134,6 +4134,7 @@ static void handleSharedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   D->addAttr(::new (S.Context) CUDASharedAttr(
       Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
 }
+#endif
 
 static void handleHCCTileStaticAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // FIXME more checkings to follow
@@ -5524,6 +5525,8 @@ private:
     AMDGPU_ISA_801,
     AMDGPU_ISA_802,
     AMDGPU_ISA_803,
+    AMDGPU_ISA_900,
+    AMDGPU_ISA_901,
   };
 
   // Parse AMDGPU ISA version string.
@@ -5560,6 +5563,8 @@ private:
       .Case("stoney",    AMDGPU_ISA_801)
       .Case("polaris10", AMDGPU_ISA_803)
       .Case("polaris11", AMDGPU_ISA_803)
+      .Case("gfx900", AMDGPU_ISA_900)
+      .Case("gfx901", AMDGPU_ISA_901)
       .Default(AMDGPU_ISA_NONE);
   }
 };
@@ -5654,34 +5659,6 @@ static void handleAMDGPUNumVGPRAttr(Sema &S, Decl *D,
                                Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleAMDGPUMaxWorkGroupDimAttr(Sema &S, Decl *D,
-                                            const AttributeList &Attr) {
-  if (!checkAttributeAtLeastNumArgs(S, Attr, 3))
-    return;
-
-  uint32_t X = 0;
-  Expr *XExpr = Attr.getArgAsExpr(0);
-  if (!checkUInt32Argument(S, Attr, XExpr, X))
-    return;
-
-  uint32_t Y = 0;
-  Expr *YExpr = Attr.getArgAsExpr(1);
-  if (!checkUInt32Argument(S, Attr, YExpr, Y))
-    return;
-
-  uint32_t Z = 0;
-  Expr *ZExpr = Attr.getArgAsExpr(2);
-  if (!checkUInt32Argument(S, Attr, ZExpr, Z))
-    return;
-
-  AMDGPUISAVersionChecker VC(S);
-  StringRef ISA;
-  if (VC.checkAMDGPUISAVersion(Attr, 3, ISA))
-    D->addAttr(::new (S.Context)
-         AMDGPUMaxWorkGroupDimAttr(Attr.getLoc(), S.Context, X, Y, Z, ISA,
-                                   Attr.getAttributeSpellingListIndex()));
-}
-
 static void handleX86ForceAlignArgPointerAttr(Sema &S, Decl *D,
                                               const AttributeList& Attr) {
   // If we try to apply it to a function pointer, don't warn, but don't
@@ -5713,7 +5690,7 @@ static void handleLayoutVersion(Sema &S, Decl *D, const AttributeList &Attr) {
   if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), Version))
     return;
 
-  // TODO: Investigate what happens with the next major version of MSVC.
+ // TODO: Investigate what happens with the next major version of MSVC.
   if (Version != LangOptions::MSVC2015) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_out_of_bounds)
         << Attr.getName() << Version << VersionExpr->getSourceRange();
@@ -5722,6 +5699,35 @@ static void handleLayoutVersion(Sema &S, Decl *D, const AttributeList &Attr) {
 
   D->addAttr(::new (S.Context)
                  LayoutVersionAttr(Attr.getRange(), S.Context, Version,
+                                   Attr.getAttributeSpellingListIndex()));
+}
+
+  // TODO: Investigate what happens with the next major version of MSVC.
+static void handleAMDGPUMaxWorkGroupDimAttr(Sema &S, Decl *D,
+                                            const AttributeList &Attr) {
+  if (!checkAttributeAtLeastNumArgs(S, Attr, 3))
+    return;
+
+  uint32_t X = 0;
+  Expr *XExpr = Attr.getArgAsExpr(0);
+  if (!checkUInt32Argument(S, Attr, XExpr, X))
+    return;
+
+  uint32_t Y = 0;
+  Expr *YExpr = Attr.getArgAsExpr(1);
+  if (!checkUInt32Argument(S, Attr, YExpr, Y))
+    return;
+
+  uint32_t Z = 0;
+  Expr *ZExpr = Attr.getArgAsExpr(2);
+  if (!checkUInt32Argument(S, Attr, ZExpr, Z))
+    return;
+
+  AMDGPUISAVersionChecker VC(S);
+  StringRef ISA;
+  if (VC.checkAMDGPUISAVersion(Attr, 3, ISA))
+    D->addAttr(::new (S.Context)
+         AMDGPUMaxWorkGroupDimAttr(Attr.getLoc(), S.Context, X, Y, Z, ISA,
                                    Attr.getAttributeSpellingListIndex()));
 }
 
@@ -6433,7 +6439,8 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleSimpleAttribute<NoThrowAttr>(S, D, Attr);
     break;
   case AttributeList::AT_CUDAShared:
-    handleSharedAttr(S, D, Attr);
+    handleSimpleAttributeWithExclusions<CUDASharedAttr,CUDAConstantAttr>(S, D, Attr);
+    //handleSharedAttr(S, D, Attr);
     break;
   case AttributeList::AT_HCCTileStatic:
     handleHCCTileStaticAttr(S, D, Attr);

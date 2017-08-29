@@ -227,12 +227,15 @@ llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
 
   // Local address space cannot have an initializer.
   // HCC tile_static variables cannot have an initializer.
+  // Shared OMP or CUDA device cannot have initializer
   llvm::Constant *Init = nullptr;
-  if (Ty.getAddressSpace() != LangAS::opencl_local &&
-      !D.hasAttr<HCCTileStaticAttr>())
-    Init = EmitNullConstant(Ty);
-  else
+  if ( (Ty.getAddressSpace() == LangAS::opencl_local) ||
+        D.hasAttr<HCCTileStaticAttr>() ||
+       (TargetAS == getContext().getTargetAddressSpace(LangAS::cuda_shared)
+        && (getLangOpts().OpenMPIsDevice || getLangOpts().CUDAIsDevice)) )
     Init = llvm::UndefValue::get(LTy);
+  else
+    Init = EmitNullConstant(Ty);
 
   llvm::GlobalVariable *GV = new llvm::GlobalVariable(
       getModule(), LTy, Ty.isConstant(getContext()), Linkage, Init, Name,
@@ -412,7 +415,10 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // If this value has an initializer, emit it.
   if (D.getInit() && !isCudaSharedVar && !isHCCTileStaticVar)
     var = AddInitializerToStaticVarDecl(D, var);
-
+  else if (isCudaSharedVar && !isHCCTileStaticVar &&
+    (getContext().getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)) {
+    var->setInitializer(llvm::UndefValue::get(var->getType()->getElementType()));
+  }
   var->setAlignment(alignment.getQuantity());
 
   if (D.hasAttr<AnnotateAttr>())
@@ -947,17 +953,31 @@ llvm::Value *CodeGenFunction::EmitLifetimeStart(uint64_t Size,
     return nullptr;
 
   llvm::Value *SizeV = llvm::ConstantInt::get(Int64Ty, Size);
-  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
-  llvm::CallInst *C =
-      Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
+  llvm::CallInst *C; 
+  if (isa<llvm::AddrSpaceCastInst>(Addr)) {
+    llvm::Value *AddrOrig = 
+      dyn_cast<llvm::AddrSpaceCastInst>(Addr)->getPointerOperand();
+    AddrOrig = Builder.CreateBitCast(AddrOrig, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, AddrOrig});
+  } else {
+    Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeStartFn(), {SizeV, Addr});
+  }
   C->setDoesNotThrow();
   return SizeV;
 }
 
 void CodeGenFunction::EmitLifetimeEnd(llvm::Value *Size, llvm::Value *Addr) {
-  Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
-  llvm::CallInst *C =
-      Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
+  llvm::CallInst *C ;
+  if (isa<llvm::AddrSpaceCastInst>(Addr)) {
+    llvm::Value *AddrOrig = 
+      dyn_cast<llvm::AddrSpaceCastInst>(Addr)->getPointerOperand();
+    AddrOrig = Builder.CreateBitCast(AddrOrig, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, AddrOrig});
+  } else {
+    Addr = Builder.CreateBitCast(Addr, AllocaInt8PtrTy);
+    C = Builder.CreateCall(CGM.getLLVMLifetimeEndFn(), {Size, Addr});
+  }
   C->setDoesNotThrow();
 }
 

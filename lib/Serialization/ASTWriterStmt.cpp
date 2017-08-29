@@ -1982,6 +1982,7 @@ void OMPClauseWriter::VisitOMPReductionClause(OMPReductionClause *C) {
     Record.AddStmt(E);
 }
 
+#if 0
 void OMPClauseWriter::VisitOMPTaskReductionClause(OMPTaskReductionClause *C) {
   Record.push_back(C->varlist_size());
   VisitOMPClauseWithPostUpdate(C);
@@ -2021,6 +2022,7 @@ void OMPClauseWriter::VisitOMPInReductionClause(OMPInReductionClause *C) {
   for (auto *E : C->taskgroup_descriptors())
     Record.AddStmt(E);
 }
+#endif
 
 void OMPClauseWriter::VisitOMPLinearClause(OMPLinearClause *C) {
   Record.push_back(C->varlist_size());
@@ -2288,6 +2290,8 @@ void ASTStmtWriter::VisitOMPLoopDirective(OMPLoopDirective *D) {
   Record.AddStmt(D->getPreCond());
   Record.AddStmt(D->getCond());
   Record.AddStmt(D->getInit());
+  Record.AddStmt(D->getLaneInit());
+  Record.AddStmt(D->getNumLanes());
   Record.AddStmt(D->getInc());
   Record.AddStmt(D->getPreInits());
   if (isOpenMPWorksharingDirective(D->getDirectiveKind()) ||
@@ -2300,20 +2304,13 @@ void ASTStmtWriter::VisitOMPLoopDirective(OMPLoopDirective *D) {
     Record.AddStmt(D->getEnsureUpperBound());
     Record.AddStmt(D->getNextLowerBound());
     Record.AddStmt(D->getNextUpperBound());
-    Record.AddStmt(D->getNumIterations());
-  }
-  if (isOpenMPLoopBoundSharingDirective(D->getDirectiveKind())) {
     Record.AddStmt(D->getPrevLowerBoundVariable());
     Record.AddStmt(D->getPrevUpperBoundVariable());
+    Record.AddStmt(D->getDistCond());
     Record.AddStmt(D->getDistInc());
     Record.AddStmt(D->getPrevEnsureUpperBound());
-    Record.AddStmt(D->getCombinedLowerBoundVariable());
-    Record.AddStmt(D->getCombinedUpperBoundVariable());
-    Record.AddStmt(D->getCombinedEnsureUpperBound());
-    Record.AddStmt(D->getCombinedInit());
-    Record.AddStmt(D->getCombinedCond());
-    Record.AddStmt(D->getCombinedNextLowerBound());
-    Record.AddStmt(D->getCombinedNextUpperBound());
+    Record.AddStmt(D->getInnermostIterationVariable());
+    Record.AddStmt(D->getNumIterations());
   }
   for (auto I : D->counters()) {
     Record.AddStmt(I);
@@ -2499,9 +2496,13 @@ void ASTStmtWriter::VisitOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
 
 void ASTStmtWriter::VisitOMPTaskgroupDirective(OMPTaskgroupDirective *D) {
   VisitStmt(D);
+#if 0
   Record.push_back(D->getNumClauses());
+#endif
   VisitOMPExecutableDirective(D);
+#if 0
   Record.AddStmt(D->getReductionRef());
+#endif
   Code = serialization::STMT_OMP_TASKGROUP_DIRECTIVE;
 }
 

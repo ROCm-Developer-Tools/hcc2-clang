@@ -15,6 +15,7 @@
 #include "Targets.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/MacroBuilder.h"
+#include "clang/Basic/GpuGridValues.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -42,6 +43,8 @@ NVPTXTargetInfo::NVPTXTargetInfo(const llvm::Triple &Triple,
 
   TLSSupported = false;
   AddrSpaceMap = &NVPTXAddrSpaceMap;
+  GridValues = (const int*) &(NVPTXGpuGridValues[0]);
+  LongGridValues = (const long long *) &(NVPTXGpuLongGridValues[0]);
   UseAddrSpaceMapMangling = true;
 
   // Define available target features
@@ -183,6 +186,16 @@ void NVPTXTargetInfo::getTargetDefines(const LangOptions &Opts,
         return "610";
       case CudaArch::SM_62:
         return "620";
+      case CudaArch::GFX700: return "700";
+      case CudaArch::GFX701: return "701";
+      case CudaArch::GFX800: return "800";
+      case CudaArch::GFX801: return "801";
+      case CudaArch::GFX802: return "802";
+      case CudaArch::GFX803: return "803";
+      case CudaArch::GFX810: return "810";
+      case CudaArch::GFX900: return "900";
+      case CudaArch::GFX901: return "901";
+
       }
       llvm_unreachable("unhandled CudaArch");
     }();

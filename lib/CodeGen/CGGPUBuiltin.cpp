@@ -41,8 +41,27 @@ static llvm::Function *GetVprintfDeclaration(CodeGenModule &CGM) {
       VprintfFuncType, llvm::GlobalVariable::ExternalLinkage, "vprintf", &M);
 }
 
-// Transforms a call to printf into a call to the NVPTX vprintf syscall (which
-// isn't particularly special; it's invoked just like a regular function).
+/// Vprintfl will allocate buffer,  write service header,
+/// copy fmtstr, and then return a pointer to Struct for data.
+static llvm::Function *GetVprintflDeclaration(CodeGenModule &CGM){
+  auto &M = CGM.getModule();
+  llvm::Type *ArgTypes[] = {CGM.Int8PtrTy, CGM.Int32Ty, CGM.Int32Ty};
+  llvm::FunctionType *VprintflFuncType = llvm::FunctionType::get(
+     llvm::PointerType::getUnqual(CGM.Int32Ty), ArgTypes, false);
+  if (auto* F = M.getFunction("vprintfl")) {
+    assert(F->getFunctionType() == VprintflFuncType);
+    return F;
+  }
+  llvm::Function* FN =
+  llvm::Function::Create(
+      VprintflFuncType, llvm::GlobalVariable::ExternalLinkage,
+      "vprintfl", &M);
+  return FN;
+}
+
+// Transforms a call to printf into a call to the NVPTX vprintf syscall or
+// AMDGCN device routine vprintfl. Neither are particularly special.
+// They are invoked just like a regular function).
 // vprintf takes two args: A format string, and a pointer to a buffer containing
 // the varargs.
 //
@@ -66,14 +85,19 @@ static llvm::Function *GetVprintfDeclaration(CodeGenModule &CGM) {
 //
 // Note that by the time this function runs, E's args have already undergone the
 // standard C vararg promotion (short -> int, float -> double, etc.).
+//
+// vprintfl is same as vprintf but with length of both structures provided
+// as compile time constants.  It returns a pointer to the thread specific
+// datastruct where values are copied.
 RValue
 CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
                                                ReturnValueSlot ReturnValue) {
-  assert(getTarget().getTriple().isNVPTX() ||
-        (getTarget().getTriple().getArch() == llvm::Triple::amdgcn &&
-         getLangOpts().CUDA));
+  assert(getLangOpts().CUDAIsDevice || getLangOpts().OpenMPIsDevice);
   assert(E->getBuiltinCallee() == Builtin::BIprintf);
   assert(E->getNumArgs() >= 1); // printf always has at least one arg.
+
+  bool Is_amdgcn = (CGM.getTriple().getArch()==llvm::Triple::amdgcn) ?
+    true : false;
 
   const llvm::DataLayout &DL = CGM.getDataLayout();
 
@@ -90,34 +114,77 @@ CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
     return RValue::get(llvm::ConstantInt::get(IntTy, 0));
   }
 
-  // Construct and fill the args buffer that we'll pass to vprintf.
-  llvm::Value *BufferPtr;
-  if (Args.size() <= 1) {
-    // If there are no args, pass a null pointer to vprintf.
-    BufferPtr = llvm::ConstantPointerNull::get(CGM.Int8PtrTy);
-  } else {
-    llvm::SmallVector<llvm::Type *, 8> ArgTypes;
-    for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I)
-      ArgTypes.push_back(Args[I].RV.getScalarVal()->getType());
+  if (!Is_amdgcn) {
 
-    // Using llvm::StructType is correct only because printf doesn't accept
-    // aggregates.  If we had to handle aggregates here, we'd have to manually
-    // compute the offsets within the alloca -- we wouldn't be able to assume
-    // that the alignment of the llvm type was the same as the alignment of the
-    // clang type.
-    llvm::Type *AllocaTy = llvm::StructType::create(ArgTypes, "printf_args");
-    llvm::Value *Alloca = CreateTempAlloca(AllocaTy);
+    llvm::Value *BufferPtr ;
+    if (Args.size() <= 1) {
+      // If there are no args, pass a null pointer to vprintf.
+      BufferPtr = llvm::ConstantPointerNull::get(CGM.Int8PtrTy);
+    } else {
+      llvm::SmallVector<llvm::Type *, 8> ArgTypes;
+      // Construct and fill the args buffer that we'll pass to vprintf.
+      for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I)
+        ArgTypes.push_back(Args[I].RV.getScalarVal()->getType());
 
-    for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I) {
-      llvm::Value *P = Builder.CreateStructGEP(AllocaTy, Alloca, I - 1);
-      llvm::Value *Arg = Args[I].RV.getScalarVal();
-      Builder.CreateAlignedStore(Arg, P, DL.getPrefTypeAlignment(Arg->getType()));
+      // Using llvm::StructType is correct only because printf doesn't accept
+      // aggregates.  If we had to handle aggregates here, we'd have to manually
+      // compute the offsets within the alloca -- we wouldn't be able to assume
+      // that the alignment of the llvm type was the same as the alignment of the
+      // clang type.
+      llvm::StructType *AllocaTy = llvm::StructType::create(ArgTypes, "printf_args");
+      llvm::Value* Alloca = CreateTempAlloca(AllocaTy);
+
+      for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I) {
+          llvm::Value *P = Builder.CreateStructGEP( AllocaTy, Alloca, I - 1);
+          llvm::Value *Arg = Args[I].RV.getScalarVal();
+          Builder.CreateAlignedStore(Arg, P, DL.getPrefTypeAlignment(Arg->getType()));
+      }
+      BufferPtr = Builder.CreatePointerCast(Alloca, CGM.Int8PtrTy);
     }
-    BufferPtr = Builder.CreatePointerCast(Alloca, CGM.Int8PtrTy);
-  }
 
-  // Invoke vprintf and return.
-  llvm::Function* VprintfFunc = GetVprintfDeclaration(CGM);
-  return RValue::get(
+    // Invoke vprintf and return.
+    llvm::Function* VprintfFunc = GetVprintfDeclaration(CGM);
+    return RValue::get(
       Builder.CreateCall(VprintfFunc, {Args[0].RV.getScalarVal(), BufferPtr}));
+
+  } else { // amdgcn invokes vprinfl, THEN writes to struct
+
+    // Calculate Compile Time Length of Format String and DataStruct
+    StringRef FormatString = cast<StringLiteral>
+      (E->getArg(0)->IgnoreParenCasts())->getString();
+    int FmtStrLen_CT = (int)FormatString.size() + 1;
+    int DataLen_CT = 0;
+    llvm::SmallVector<llvm::Type *, 8> ArgTypes;
+    for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I) {
+      llvm::Type* ArgType = Args[I].RV.getScalarVal()->getType();
+      ArgTypes.push_back(ArgType);
+      DataLen_CT += (int) DL.getTypeAllocSize(ArgType);
+    }
+    // printf("Compile Time Fmtstr length:%d  DataLen:%d \n",FmtStrLen_CT,DataLen_CT);
+
+    // vprintfl will allocate thread specific device global memory, insert
+    // service header, copy format string, then return pointer to datastruct.
+    llvm::Value    *FmtStrLen  = llvm::ConstantInt::get(Int32Ty, FmtStrLen_CT);
+    llvm::Value    *DataLen    = llvm::ConstantInt::get(Int32Ty, DataLen_CT);
+    llvm::Function *FN         = GetVprintflDeclaration(CGM);
+    llvm::Value *DataStructPtr = Builder.CreateCall(FN,
+                                 {Args[0].RV.getScalarVal(), FmtStrLen, DataLen});
+
+    if (!ArgTypes.empty()) {
+      // Declare struct to be built in device global memory
+      llvm::StructType *DataStructTy = llvm::StructType::create(ArgTypes, "printf_args");
+      unsigned AS = getContext().getTargetAddressSpace(LangAS::cuda_device);
+      llvm::Value* BufferPtr = Builder.CreatePointerCast(DataStructPtr,
+          llvm::PointerType::get(DataStructTy,AS));
+
+      // Write thread specific values into the data structure
+      for (unsigned I = 1, NumArgs = Args.size(); I < NumArgs; ++I) {
+        llvm::Value *P = Builder.CreateStructGEP(DataStructTy, BufferPtr , I - 1);
+        llvm::Value *Arg = Args[I].RV.getScalarVal();
+        Builder.CreateAlignedStore(Arg, P, DL.getPrefTypeAlignment(Arg->getType()));
+      }
+    }
+
+    return RValue::get(llvm::ConstantInt::get(Int32Ty,0));
+  }
 }

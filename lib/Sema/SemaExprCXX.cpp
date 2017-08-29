@@ -693,9 +693,11 @@ Sema::ActOnCXXThrow(Scope *S, SourceLocation OpLoc, Expr *Ex) {
 
 ExprResult Sema::BuildCXXThrow(SourceLocation OpLoc, Expr *Ex,
                                bool IsThrownVarInScope) {
-  // Don't report an error if 'throw' is used in system headers.
+  // Don't report an error if 'throw' is used in system headers or for a device
+  // whose OpenMP implementation does not support it.
   if (!getLangOpts().CXXExceptions &&
-      !getSourceManager().isInSystemHeader(OpLoc))
+      !getSourceManager().isInSystemHeader(OpLoc) &&
+      !getLangOpts().OpenMPNoDeviceEH)
     Diag(OpLoc, diag::err_exceptions_disabled) << "throw";
 
   // Exceptions aren't allowed in CUDA device code.
@@ -5411,6 +5413,12 @@ QualType Sema::CXXCheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
   // Assume r-value.
   VK = VK_RValue;
   OK = OK_Ordinary;
+
+  // C++AMP
+  if(getLangOpts().CPlusPlusAMP) {
+    DiagnoseCXXAMPExpr(LHS.get()->IgnoreParenImpCasts(), LHS);
+    DiagnoseCXXAMPExpr(RHS.get()->IgnoreParenImpCasts(), RHS);
+  }
 
   // C++AMP
   if(getLangOpts().CPlusPlusAMP) {

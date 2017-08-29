@@ -72,6 +72,16 @@ inline bool DeclAttrsMatchHCCMode(const LangOptions &LangOpts, Decl *D) {
   return isDeviceSideDecl == LangOpts.DevicePath;
 }
 
+// Helper function to check whether D's attributes match current offloading
+// mode.
+inline bool DeclAttrsMatchOffloadMode(const LangOptions &LangOpts, Decl *D,
+                                      bool InOpenMPDeviceRegion) {
+  if (LangOpts.OpenMPIsDevice)
+    return InOpenMPDeviceRegion;
+
+  return DeclAttrsMatchCUDAMode(LangOpts, D);
+}
+
 // Directly mark a variable odr-used. Given a choice, prefer to use 
 // MarkVariableReferenced since it does additional checks and then 
 // calls MarkVarDeclODRUsed.

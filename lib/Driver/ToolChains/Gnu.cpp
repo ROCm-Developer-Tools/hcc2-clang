@@ -10,6 +10,7 @@
 #include "Gnu.h"
 #include "Linux.h"
 #include "Hcc.h"
+#include "CommonArgs.h"
 #include "Arch/ARM.h"
 #include "Arch/Mips.h"
 #include "Arch/PPC.h"

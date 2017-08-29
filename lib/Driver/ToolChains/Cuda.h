@@ -92,6 +92,21 @@ public:
 namespace tools {
 namespace NVPTX {
 
+// for amdgcn the backend is llvm-link + opt
+class LLVM_LIBRARY_VISIBILITY Backend : public Tool {
+  public:
+    Backend(const ToolChain &TC)
+      : Tool("NVPTX::Backend", "GPU-backend", TC, RF_Full, llvm::sys::WEM_UTF8,
+              "--options-file") {}
+    virtual bool hasIntegratedCPP() const override { return false; }
+    //virtual bool isLinkJob() const { return false; }
+    virtual void ConstructJob(Compilation &C, const JobAction &JA,
+                              const InputInfo &Output,
+                              const InputInfoList &Inputs,
+                              const llvm::opt::ArgList &TCArgs,
+                              const char *LinkingOutput) const override;
+};
+
 // Run ptxas, the NVPTX assembler.
 class LLVM_LIBRARY_VISIBILITY Assembler : public Tool {
  public:
@@ -193,6 +208,7 @@ public:
   CudaInstallationDetector CudaInstallation;
 
 protected:
+  Tool *buildBackend() const override;    // for amdgcn, link and opt
   Tool *buildAssembler() const override;  // ptxas
   Tool *buildLinker() const override;     // fatbinary (ok, not really a linker)
 
