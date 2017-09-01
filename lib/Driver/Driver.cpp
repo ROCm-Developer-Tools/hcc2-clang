@@ -3383,7 +3383,13 @@ class ToolSelector final {
     if((BJ->isOffloading(Action::OFK_Cuda) ||
          BJ->isOffloading(Action::OFK_OpenMP)) &&
       StringRef(BJ->getOffloadingArch()).startswith("gfx"))
-      return nullptr;
+      // It is necessary to combine when generating IR for compile-only with 
+      // flags "-c -S -emit-llvm".  If only flags "-c -S" the gcn backend is 
+      // needed to generate linked and opt IR for llc, so do not combine.
+      if( ! ( C.getArgs().hasArg(options::OPT_c) &&
+              C.getArgs().hasArg(options::OPT_S) &&
+              C.getArgs().hasArg(options::OPT_emit_llvm)) )
+        return nullptr;
 
     // Get compiler tool.
     const Tool *T = TC.SelectTool(*CJ);
