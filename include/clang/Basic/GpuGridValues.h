@@ -72,7 +72,7 @@ static const int AMDGPUGpuGridValues[] = {
   64,                // GV_Warp_Size 
   6,                 // GV_Warp_Size_Log2 
   64 * 256,          // GV_Warp_Slot_Size 
-  1024,              // GV_Max_Teams 
+  128,               // GV_Max_Teams 
   256,
   63,                // GV_Warp_Size_Log2_Mask
   896                // GV_SimpleBufferSize
