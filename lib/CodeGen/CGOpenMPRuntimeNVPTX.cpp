@@ -4797,7 +4797,13 @@ llvm::Function *CGOpenMPRuntimeNVPTX::emitRegistrationFunction() {
     llvm::Instruction *LastNonAllocaNonRefReplacement = nullptr;
 
     for (auto &I : HeaderBB) {
-      if (isa<llvm::AllocaInst>(I)) {
+
+      // Must test if the operand of an AddrSpaceCastInst is alloca
+      llvm::Instruction *IAA = isa<llvm::AddrSpaceCastInst>(&I) ?
+         cast<llvm::Instruction>(
+          dyn_cast<llvm::AddrSpaceCastInst>(&I)->getPointerOperand()) :
+         &I;
+      if (isa<llvm::AllocaInst>(IAA)) {
         LastAlloca = &I;
         continue;
       }
