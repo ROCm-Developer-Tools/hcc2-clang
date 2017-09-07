@@ -35,93 +35,16 @@ void OMPDEV::Backend::ConstructJob(Compilation &C, const JobAction &JA,
   assert(StringRef(JA.getOffloadingArch()).startswith("gfx") &&
     " unless gfx processor, backend should be clang") ;
 
-  // For amdgcn the Backend Job will call llvm-link & opt steps
+  // For amdgcn, llc deferred to link phase so just disassemble the bc
   ArgStringList CmdArgs;
-  // Add the input bc's created by compile step
   for (InputInfoList::const_iterator
        it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
     const InputInfo &II = *it;
     CmdArgs.push_back(II.getFilename());
-  }
-
-  std::string GFXNAME = JA.getOffloadingArch();
-
-  // Find in -L<path> and LIBRARY_PATH.
-  ArgStringList LibraryPaths;
-  for (auto Arg : Args) {
-    if (Arg->getSpelling() == "-L") {
-      std::string Current = "-L";
-      Current += Arg->getValue();
-      LibraryPaths.push_back(Args.MakeArgString(Current.c_str()));
-    }
-  }
-  addDirectoryList(Args, LibraryPaths, "-L", "LIBRARY_PATH");
-
-  const char * libamdgcn;
-  libamdgcn = getenv("LIBAMDGCN");
-  if (!libamdgcn) libamdgcn = "/opt/rocm/libamdgcn";
-  LibraryPaths.push_back(Args.MakeArgString(
-    "-L" + std::string(libamdgcn) + "/" + std::string(GFXNAME)  + "/lib"));
-
-  const char * hcc2 = getenv("HCC2");
-  if (!hcc2) hcc2 = "/opt/rocm/hcc2";
-  LibraryPaths.push_back(Args.MakeArgString( "-L" + std::string(hcc2) + 
-    "/lib/libdevice"));
-
-  addBCLib(C, Args, CmdArgs, LibraryPaths,
-    Args.MakeArgString("libomptarget-amdgcn-" + std::string(GFXNAME) + ".bc"));
-  addBCLib(C, Args, CmdArgs, LibraryPaths,
-    Args.MakeArgString("libicuda2gcn-" + std::string(GFXNAME)  + ".bc"));
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "cuda2gcn.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "opencl.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "ockl.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "irif.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "ocml.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_finite_only_off.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_daz_opt_off.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths,
-    "oclc_correctly_rounded_sqrt_on.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_unsafe_math_off.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "hc.amdgcn.bc");
-  addBCLib(C, Args, CmdArgs, LibraryPaths, "oclc_isa_version.amdgcn.bc");
-
-  addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LINK_OPTS");
-  //  CmdArgs.push_back("-suppress-warnings");
-
-  // Add an intermediate output file which is input to opt
-  CmdArgs.push_back("-o");
-  std::string TmpName = C.getDriver().GetTemporaryPath("OPT_INPUT", "bc");
-  const char *ResultingBitcodeF = C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
-  CmdArgs.push_back(ResultingBitcodeF);
-  const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llvm-link");
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-
-  ArgStringList OptArgs;
-  // The input to opt is the output from llvm-link
-  OptArgs.push_back(ResultingBitcodeF);
-  // Add CLANG_TARGETOPT_OPTS override options to opt
-  if (getenv("CLANG_TARGET_OPT_OPTS"))
-    addEnvListWithSpaces(Args, OptArgs, "CLANG_TARGET_OPT_OPTS");
-  else {
-    OptArgs.push_back(Args.MakeArgString("-O2"));
-    OptArgs.push_back("-S");
-    const char *mcpustr = Args.MakeArgString("-mcpu=" + GFXNAME);
-    OptArgs.push_back(mcpustr);
-    OptArgs.push_back("-dce");
-    OptArgs.push_back("-sroa");
-    OptArgs.push_back("-globaldce");
-  }
-  OptArgs.push_back("-o");
-  OptArgs.push_back(Output.getFilename());
-  const char *OptExec = Args.MakeArgString(C.getDriver().Dir + "/opt");
-  C.addCommand(llvm::make_unique<Command>(JA, *this, OptExec, OptArgs, Inputs ));
-
-  if (Args.hasArg(options::OPT_v)) {
-    ArgStringList nmArgs;
-    nmArgs.push_back(ResultingBitcodeF);
-    nmArgs.push_back("-debug-syms");
-    const char *nmExec = Args.MakeArgString(C.getDriver().Dir + "/llvm-nm");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, nmExec, nmArgs, Inputs ));
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+    const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llvm-dis");
+    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs ));
   }
 }
 
@@ -139,23 +62,18 @@ void OMPDEV::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   assert(gpu_arch != CudaArch::UNKNOWN &&
          "Device action expected to have an architecture.");
 
-  // For amdgcn this job will call llc  (Lightning Compiler)
+  // For amdgcn, call llvm-as
   if (StringRef(JA.getOffloadingArch()).startswith("gfx")) {
     ArgStringList CmdArgs;
     for (InputInfoList::const_iterator
          it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
       const InputInfo &II = *it;
       CmdArgs.push_back(II.getFilename());
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(Output.getFilename());
+      const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llvm-as");
+      C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
     }
-    CmdArgs.push_back("-mtriple=amdgcn--cuda");
-    CmdArgs.push_back("-filetype=obj");
-    addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LLC_OPTS");
-    std::string GFXNAME = JA.getOffloadingArch();
-    CmdArgs.push_back(Args.MakeArgString("-mcpu=" + GFXNAME));
-    CmdArgs.push_back("-o");
-    CmdArgs.push_back(Output.getFilename());
-    const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/llc");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
     return;
   }
 
@@ -230,34 +148,8 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                  const InputInfoList &Inputs,
                                  const ArgList &Args,
                                  const char *LinkingOutput) const {
-  // For amdgcn linker is lld 
-  if (getToolChain().getArch() == llvm::Triple::amdgcn) {
-    ArgStringList CmdArgs;
 
-    CmdArgs.push_back("-flavor");
-    CmdArgs.push_back("gnu");
-
-    CmdArgs.push_back("--no-undefined");
-    CmdArgs.push_back("-shared");
-
-    // The output from ld.lld is an HSA code object file
-    CmdArgs.push_back("-o");
-    CmdArgs.push_back(Output.getFilename());
-
-    // Add the input object files created by "Assemble" step
-    for (InputInfoList::const_iterator
-       it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-      const InputInfo &II = *it;
-      if (II.isFilename()) {
-        CmdArgs.push_back(II.getFilename());
-        //StringRef Name = llvm::sys::path::filename(II.getFilename());
-      }
-    }
-
-    const char *Exec = Args.MakeArgString(C.getDriver().Dir + "/lld");
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
-
-  } else {
+  if (getToolChain().getArch() != llvm::Triple::amdgcn) {
 
   const auto &TC =
       static_cast<const toolchains::OmpDeviceToolChain &>(getToolChain());
@@ -378,6 +270,127 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   const char *Exec = Args.MakeArgString(TC.GetProgramPath("fatbinary"));
   C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+
+    // ------------------  End of Linker::ConstructJob for nvptx ---------------
+  } else {
+    // ------------------  Start of Linker::ConstructJob for amdgcn ------------
+
+    // For amdgcn, linker is llvm-link, opt, llc, and lld
+    std::string driver_dir = std::string(C.getDriver().Dir);
+    std::string gfx_name = JA.getOffloadingArch();
+    std::string hcc2 = getenv("HCC2") ? getenv("HCC2")
+      : "/opt/rocm/hcc2" ;
+    std::string libamdgcn = getenv("LIBAMDGCN") ? getenv("LIBAMDGCN")
+      :"/opt/rocm/libamdgcn" ;
+    std::string TmpName ;
+    TmpName = C.getDriver().GetTemporaryPath("OPT_INPUT", "bc");
+    const char *link_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+    TmpName = C.getDriver().GetTemporaryPath("LLC_INPUT", "bc");
+    const char *opt_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+    TmpName = C.getDriver().GetTemporaryPath("LLD_INPUT", "hsaco");
+    const char *llc_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+
+    { // llvm-link
+      ArgStringList CmdArgs;
+      // Add the input bc's created by compile step
+      for (InputInfoList::const_iterator
+           it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+         const InputInfo &II = *it;
+
+        if (!II.isFilename()) continue;
+        CmdArgs.push_back(II.getFilename());
+      }
+      // Find in -L<path> and LIBRARY_PATH.
+      ArgStringList LibPaths;
+      for (auto Arg : Args) {
+        if (Arg->getSpelling() == "-L") {
+          std::string Current = "-L";
+          Current += Arg->getValue();
+          LibPaths.push_back(Args.MakeArgString(Current.c_str()));
+        }
+      }
+      addDirectoryList(Args, LibPaths, "-L", "LIBRARY_PATH");
+      LibPaths.push_back(Args.MakeArgString(
+        "-L" + libamdgcn + "/" + gfx_name + "/lib"));
+      LibPaths.push_back(Args.MakeArgString( "-L" + hcc2 + "/lib/libdevice"));
+      addBCLib(C, Args, CmdArgs, LibPaths,
+        Args.MakeArgString("libomptarget-amdgcn-" + gfx_name + ".bc"));
+      addBCLib(C, Args, CmdArgs, LibPaths,
+        Args.MakeArgString("libicuda2gcn-" + gfx_name  + ".bc"));
+      addBCLib(C, Args, CmdArgs, LibPaths, "cuda2gcn.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "opencl.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "ockl.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "irif.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "ocml.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "oclc_finite_only_off.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "oclc_daz_opt_off.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths,
+        "oclc_correctly_rounded_sqrt_on.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "oclc_unsafe_math_off.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "hc.amdgcn.bc");
+      addBCLib(C, Args, CmdArgs, LibPaths, "oclc_isa_version.amdgcn.bc");
+      addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LINK_OPTS");
+      //  CmdArgs.push_back("-suppress-warnings");
+      // Add an intermediate output file which is input to opt
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(link_outfn);
+      C.addCommand(llvm::make_unique<Command>(JA, *this,
+        Args.MakeArgString(driver_dir + "/llvm-link"), CmdArgs, Inputs));
+    } // end of llvm-link command
+
+    { // opt command
+      ArgStringList CmdArgs;
+      CmdArgs.push_back(link_outfn);
+      // Add CLANG_TARGETOPT_OPTS override options to opt
+      if (getenv("CLANG_TARGET_OPT_OPTS")) {
+        addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_OPT_OPTS");
+      } else {
+        // FIXME  Do we need a triple here?
+        CmdArgs.push_back(Args.MakeArgString("-O2"));
+        CmdArgs.push_back(Args.MakeArgString("-mcpu=" + gfx_name));
+        CmdArgs.push_back("-dce");
+        CmdArgs.push_back("-sroa");
+        CmdArgs.push_back("-globaldce");
+      }
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(opt_outfn);
+      C.addCommand(llvm::make_unique<Command>(JA, *this,
+        Args.MakeArgString(driver_dir + "/opt"), CmdArgs, Inputs));
+      if (Args.hasArg(options::OPT_v)) {
+        ArgStringList nmArgs;
+        nmArgs.push_back(opt_outfn);
+        nmArgs.push_back("-debug-syms");
+        C.addCommand(llvm::make_unique<Command>(JA, *this,
+          Args.MakeArgString(driver_dir + "/llvm-nm"), nmArgs, Inputs));
+      }
+    } // end of opt command
+
+    { // llc
+      ArgStringList CmdArgs;
+      CmdArgs.push_back(opt_outfn);
+      CmdArgs.push_back("-mtriple=amdgcn--cuda");
+      CmdArgs.push_back("-filetype=obj");
+      addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LLC_OPTS");
+      CmdArgs.push_back(Args.MakeArgString("-mcpu=" + gfx_name));
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(llc_outfn);
+      C.addCommand(llvm::make_unique<Command>(JA, *this,
+        Args.MakeArgString(driver_dir + "/llc"), CmdArgs, Inputs));
+    } // end of llc command
+
+    { // lld
+      ArgStringList CmdArgs;
+      CmdArgs.push_back("-flavor");
+      CmdArgs.push_back("gnu");
+      CmdArgs.push_back("--no-undefined");
+      CmdArgs.push_back("-shared");
+      // The output from lld is an HSA code object file
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(Output.getFilename());
+      CmdArgs.push_back(llc_outfn);
+      C.addCommand(llvm::make_unique<Command>(JA, *this,
+        Args.MakeArgString(driver_dir + "/lld"), CmdArgs, Inputs));
+    } // end of lld command
 
   }
 }
