@@ -907,7 +907,7 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
   PrintVersion(C, llvm::errs());
 
   Diag(clang::diag::note_drv_command_failed_diag_msg)
-      << "PLEASE submit a bug report to " BUG_REPORT_URL " and include the "
+      << "PLEASE open an issue in to " BUG_REPORT_URL " and include the "
          "crash backtrace, preprocessed source, and associated run script.";
 
   // Suppress driver output and emit preprocessor output to temp file.
