@@ -504,8 +504,9 @@ static FieldDecl *addFieldToRecordDecl(ASTContext &C, DeclContext *DC,
 }
 
 static void Dot2Underbar(llvm::Function* Fn) {
-  std::pair<StringRef,StringRef> pair = Fn->getName().split(".");
-  if(pair.second.size()) Fn->setName(pair.first + "_" + pair.second);
+  std::string name = Fn->getName().str();
+  replace(name.begin(),name.end(),'.', '_');
+  Fn->setName(name);
   return;
 }
 
@@ -758,12 +759,6 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createKernelInitializerFunction(
 
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, InitFn, CGFI);
   InitFn->setLinkage(llvm::GlobalValue::InternalLinkage);
-
-  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-    InitFn->removeFnAttr(llvm::Attribute::OptimizeNone);
-    InitFn->removeFnAttr(llvm::Attribute::NoInline);
-    InitFn->addFnAttr(llvm::Attribute::AlwaysInline);
-  }
 
   CodeGenFunction CGF(CGM, /*suppressNewContext=*/true);
   // We don't need debug information in this function as nothing here refers to
@@ -1241,7 +1236,6 @@ void CGOpenMPRuntimeNVPTX::TargetKernelProperties::setRequiresOMPRuntime() {
     RequiresOMPRuntime = Finder.matchesOpenMP();
     RequiresOMPRuntimeReason = Finder.matchReason();
  
-
     unsigned DS_SimpleBufferSize =  (unsigned) CGM.
     getContext().getTargetInfo().getGridValue(GPU::GVIDX::GV_SimpleBufferSize);
     if (!RequiresOMPRuntime && MasterSharedDataSize > DS_SimpleBufferSize) {
@@ -1500,7 +1494,6 @@ void CGOpenMPRuntimeNVPTX::WorkerFunctionState::createWorkerFunction(
       /* placeholder */ "_worker", &CGM.getModule());
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, WorkerFn, *CGFI);
   WorkerFn->setLinkage(llvm::GlobalValue::InternalLinkage);
-  WorkerFn->removeFnAttr(llvm::Attribute::OptimizeNone);
   WorkerFn->removeFnAttr(llvm::Attribute::NoInline);
   WorkerFn->addFnAttr(llvm::Attribute::AlwaysInline);
 }
@@ -1535,13 +1528,6 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   llvm::BasicBlock *BarrierBB = CGF.createBasicBlock(".barrier.parallel");
   llvm::BasicBlock *ExitBB = CGF.createBasicBlock(".exit");
 
-  Address WorkFn = CGF.CreateTempAlloca(
-      CGF.Int8PtrTy, CharUnits::fromQuantity(8), /*Name*/ "work_fn");
-
- // auto FnPtrSize = CGM.getDataLayout().getTypeAllocSize(CGF.Int8PtrTy);
- // CGF.EmitLifetimeStart(FnPtrSize, WorkFn.getPointer());
- // llvm::Value * tempSize = llvm::ConstantInt::get(CGM.Int64Ty, FnPtrSize);
-
   CGF.EmitBranch(AwaitBB);
 
   // Workers wait for work from master.
@@ -1549,10 +1535,11 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   // Wait for parallel work
   SyncCTAThreads(CGF);
 
+  Address WorkFn = CGF.CreateTempAlloca(
+      CGF.Int8PtrTy, CharUnits::fromQuantity(8), /*Name*/ "work_fn");
   Address ExecStatus =
       CGF.CreateTempAlloca(CGF.Int8Ty, CharUnits::fromQuantity(1),
                            /*Name*/ "exec_status");
-  //CGF.InitTempAlloca(ExecStatus, Bld.getInt8(/*C=*/0));
   Bld.CreateStore(Bld.getInt8(0), ExecStatus);
 
   llvm::Value *IsOMPRuntimeInitialized =
@@ -1563,20 +1550,6 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
   Bld.CreateStore(Bld.CreateZExt(Ret, CGF.Int8Ty), ExecStatus);
 
   llvm::Value *WorkID = Bld.CreateLoad(WorkFn, /*isVolatile=*/true);
-#if 0
- llvm::Value *WorkFnInst = WorkFn.getPointer();
- if (isa<llvm::AddrSpaceCastInst>(WorkFnInst)) {
-    llvm::Value *WorkFnOrig =
-      dyn_cast<llvm::AddrSpaceCastInst>(WorkFnInst)->getPointerOperand();
-    Address WorkFnOrigAddr = Address(WorkFnOrig, CharUnits::fromQuantity(8));
-    //  AS5 to AS0 because we want to load the AS0
-    Address NewAddr = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
-      WorkFnOrigAddr, WorkFn.getPointer()->getType());
-    WorkID = Bld.CreateLoad(NewAddr,true); 
-  } else  {
-    WorkID = Bld.CreateLoad(WorkFn, /*isVolatile=*/true);
-  }
-#endif
   // On termination condition (workfn == 0), exit loop.
   llvm::Value *ShouldTerminate = Bld.CreateICmpEQ(
       WorkID, llvm::Constant::getNullValue(CGF.Int8PtrTy), "should_terminate");
@@ -1611,18 +1584,9 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
     for (auto *W : Work) {
       // Try to match this outlined function.
       llvm::Value *WorkFnMatch;
-      // XXX:[OMPTARGET.FunctionPtr] FunctionPtr is not allowed in AMDGCN
-      //   Replace it with hash code of function name. If an indirect call
-      //   is made with function pointer, replace it with direct call
-      if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-        WorkFnMatch =
-          Bld.CreateICmpEQ(Bld.CreatePtrToInt(WorkID, CGM.Int64Ty),
-            WorkMap[W], "work_match");
-      } else {
-        auto ThisID = Bld.CreatePtrToInt(W, CGM.Int64Ty);
-        ThisID = Bld.CreateIntToPtr(ThisID, CGM.Int8PtrTy);
-        WorkFnMatch = Bld.CreateICmpEQ(WorkID, ThisID, "work_match");
-      }
+      auto ThisID = Bld.CreatePtrToInt(W, CGM.Int64Ty);
+      ThisID = Bld.CreateIntToPtr(ThisID, CGM.Int8PtrTy);
+      WorkFnMatch = Bld.CreateICmpEQ(WorkID, ThisID, "work_match");
       llvm::BasicBlock *ExecuteFNBB = CGF.createBasicBlock(".execute.fn");
       llvm::BasicBlock *CheckNextBB = CGF.createBasicBlock(".check.next");
       Bld.CreateCondBr(WorkFnMatch, ExecuteFNBB, CheckNextBB);
@@ -1645,30 +1609,14 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
     // region makes a declare target call that may contain an orphaned parallel
     // directive.
     if (WST.TP.mayContainOrphanedParallel()) {
-      // XXX:[OMPTARGET.FunctionPtr]
       if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-        // Work through WorkMap and emit if-then to invoke the matched work Fn
-        // After optimization, they are likely transformed into switch-case
-        auto DestBranch = Bld.CreatePtrToInt(WorkID, CGM.Int64Ty);
-        for (auto it : WorkMap) {
-          std::string str = "work_match_" + it.first->getName().str();
-          auto IfMatch = Bld.CreateICmpEQ(DestBranch, it.second, str.c_str());
-          std::string strHit = ".execute.fn_" + it.first->getName().str();
-          auto HitThisFnBB = CGF.createBasicBlock(strHit.c_str());
-          std::string strNext = ".check.next_" + it.first->getName().str();
-          auto CheckNextFnBB = CGF.createBasicBlock(strNext.c_str());
-          Bld.CreateCondBr(IfMatch, HitThisFnBB, CheckNextFnBB);
-
-          CGF.EmitBlock(HitThisFnBB);
-          CGF.EmitCallOrInvoke(it.first, {Bld.getInt16(/*ParallelLevel=*/0),
-                                      GetMasterThreadID(CGF)});
-
-          // Jump to terminate
-          CGF.EmitBranch(TerminateBB);
-
-          // Continue to next Fn checking
-          CGF.EmitBlock(CheckNextFnBB);
-        }
+        // no function pointer support in amdgcn, so call select_outline_wrapper
+        llvm::FunctionType *FnTy = llvm::FunctionType::get(CGM.VoidTy,
+          {CGM.Int16Ty, CGM.Int32Ty, WorkID->getType()}, /*isVarArg*/ false);
+        llvm::Constant *SelectWrapperFn = CGM.CreateRuntimeFunction(FnTy, 
+          "select_outline_wrapper");
+        CGF.EmitCallOrInvoke(SelectWrapperFn, {Bld.getInt16(0),
+          GetMasterThreadID(CGF),WorkID});
       } else {
       auto ParallelFnTy =
           llvm::FunctionType::get(CGM.VoidTy, {CGM.Int16Ty, CGM.Int32Ty},
@@ -1700,7 +1648,6 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
 
   // Exit target region.
   CGF.EmitBlock(ExitBB);
-//  CGF.EmitLifetimeEnd(tempSize,WorkFn.getPointer());
 }
 
 // Setup NVPTX threads for master-worker OpenMP scheme.
@@ -3704,10 +3651,25 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createDataSharingParallelWrapper(
       CGM.getTypes().GetFunctionType(CGFI), llvm::GlobalValue::InternalLinkage,
       OutlinedParallelFn.getName() + "_wrapper", &CGM.getModule());
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
-  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+  if (CGM.getTriple().getArch() != llvm::Triple::amdgcn) {
   Fn->removeFnAttr(llvm::Attribute::NoInline);
   Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
+  } else {
+    // For amdgcn, we need unique wrapper with external linkage because
+    // select_outline_wrapper replaces function pointer used for nvptx.
+    Fn->setName(CGM.getModule().getName() + Fn->getName());
+    Dot2Underbar(Fn);
+    Fn->setLinkage(llvm::GlobalValue::ExternalLinkage);
+    // Create global constant of the hash value for select_outline_wrapper
+    (void)new llvm::GlobalVariable(CGM.getModule(), CGM.SizeTy,
+            /*isConstant=*/true,llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantInt::get(CGM.SizeTy,llvm::hash_value(Fn->getName())),
+            Twine("_HASHW_") + Fn->getName().str(),
+            /*InsertBefore=*/nullptr, llvm::GlobalVariable::NotThreadLocal,
+            CGM.getContext().getTargetAddressSpace(LangAS::cuda_constant),
+            /*isExternallyInitialized*/ false);
+  }
 
   CodeGenFunction CGF(CGM, /*suppressNewContext=*/true);
   CGF.StartFunction(GlobalDecl(), Ctx.VoidTy, Fn, CGFI, WrapperArgs);
@@ -4033,7 +3995,6 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
   assert(WFn && "Wrapper function does not exist??");
 
   // Force inline this outlined function at its call site.
-  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
   Fn->removeFnAttr(llvm::Attribute::NoInline);
   Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
@@ -4052,6 +4013,7 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
     // XXX:[OMPTARGET.FunctionPtr]
     //   FunctionPtr is not allowed in AMDGCN
     //   Replace it with hash code of function name
+
     if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
       auto HashCode = llvm::hash_value(WFn->getName());
       auto Size = llvm::ConstantInt::get(CGM.SizeTy, HashCode);
@@ -4076,13 +4038,6 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
 
     // Remember for post-processing in worker loop.
     Work.push_back(WFn);
-
-    // XXX:[OMPTARGET.FunctionPtr]
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
-      auto HashCode = llvm::hash_value(WFn->getName());
-      auto* ThisID = llvm::ConstantInt::get(CGM.SizeTy, HashCode);
-      WorkMap[WFn] = ThisID;
-    }
   };
   auto &&L1ParallelGen = [this, WFn, &CapturedVars, &RTLoc,
                           &Loc](CodeGenFunction &CGF, PrePostActionTy &) {
@@ -4255,7 +4210,6 @@ void CGOpenMPRuntimeNVPTX::emitSimdCall(CodeGenFunction &CGF,
   assert(WFn && "Wrapper function does not exist??");
 
   // Force inline this outlined function at its call site.
-  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
   Fn->removeFnAttr(llvm::Attribute::NoInline);
   Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
@@ -4289,9 +4243,7 @@ void CGOpenMPRuntimeNVPTX::emitSimdCall(CodeGenFunction &CGF,
     auto TaskState = CGF.CreateMemTemp(TaskBufferTy, CharUnits::fromQuantity(8),
                                        /*Name=*/"task_state")
                          .getPointer();
-    //CGF.InitTempAlloca(IsFinal, Bld.getInt8(/*C=*/0));
     Bld.CreateStore(Bld.getInt8(0), IsFinal);
-    //CGF.InitTempAlloca(WorkSource, Bld.getInt32(/*C=*/-1));
     Bld.CreateStore(Bld.getInt32(-1), WorkSource);
 
     llvm::BasicBlock *DoBodyBB = CGF.createBasicBlock(".do.body");
