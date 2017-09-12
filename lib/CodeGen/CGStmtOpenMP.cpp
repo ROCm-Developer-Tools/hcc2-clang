@@ -415,13 +415,8 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
     F->addFnAttr(llvm::Attribute::NoUnwind);
 
   if ((Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn) &&
-      CGM.getLangOpts().OpenMPIsDevice ) {
-    if(isKernel)
+      CGM.getLangOpts().OpenMPIsDevice && isKernel)
       F->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
-    F->removeFnAttr(llvm::Attribute::OptimizeNone);
-    F->removeFnAttr(llvm::Attribute::NoInline);
-    F->addFnAttr(llvm::Attribute::AlwaysInline);
-  }
 
   // Generate the function.
   StartFunction(CD, Ctx.VoidTy, F, FuncInfo, Args, CD->getLocation(),
