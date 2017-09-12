@@ -290,6 +290,23 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     TmpName = C.getDriver().GetTemporaryPath("LLD_INPUT", "hsaco");
     const char *llc_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
 
+    // FIXME: Always call build-select,  Remove the environment variable trigger.
+    if (getenv("USE_BUILD_SELECT")) { // Build select
+      ArgStringList CmdArgs;
+      TmpName = C.getDriver().GetTemporaryPath("BUILD_SELECT", "bc");
+      const char *select_wrapper_fn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+      for (InputInfoList::const_iterator
+           it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+         const InputInfo &II = *it;
+
+        if (!II.isFilename()) continue;
+        CmdArgs.push_back(II.getFilename());
+      }
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(select_wrapper_fn);
+      C.addCommand(llvm::make_unique<Command>(JA, *this,
+        Args.MakeArgString(driver_dir + "/build-select"), CmdArgs, Inputs));
+    }
     { // llvm-link
       ArgStringList CmdArgs;
       // Add the input bc's created by compile step
