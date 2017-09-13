@@ -289,12 +289,11 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     const char *opt_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
     TmpName = C.getDriver().GetTemporaryPath("LLD_INPUT", "hsaco");
     const char *llc_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+    TmpName = C.getDriver().GetTemporaryPath("BUILD_SELECT", "bc");
+    const char *select_fn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
 
-    // FIXME: Always call build-select,  Remove the environment variable trigger.
-    if (getenv("USE_BUILD_SELECT")) { // Build select
+    { // Build select_outline_wrapper function
       ArgStringList CmdArgs;
-      TmpName = C.getDriver().GetTemporaryPath("BUILD_SELECT", "bc");
-      const char *select_wrapper_fn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
       for (InputInfoList::const_iterator
            it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
          const InputInfo &II = *it;
@@ -303,7 +302,7 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back(II.getFilename());
       }
       CmdArgs.push_back("-o");
-      CmdArgs.push_back(select_wrapper_fn);
+      CmdArgs.push_back(select_fn);
       C.addCommand(llvm::make_unique<Command>(JA, *this,
         Args.MakeArgString(driver_dir + "/build-select"), CmdArgs, Inputs));
     }
@@ -317,6 +316,7 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         if (!II.isFilename()) continue;
         CmdArgs.push_back(II.getFilename());
       }
+      CmdArgs.push_back(select_fn);
       // Find in -L<path> and LIBRARY_PATH.
       ArgStringList LibPaths;
       for (auto Arg : Args) {
