@@ -1611,12 +1611,13 @@ void CGOpenMPRuntimeNVPTX::emitWorkerLoop(CodeGenFunction &CGF,
     if (WST.TP.mayContainOrphanedParallel()) {
       if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
         // no function pointer support in amdgcn, so call select_outline_wrapper
+        llvm::Value * hashcode = Bld.CreatePtrToInt(WorkID, CGM.Int64Ty, "hashcode");
         llvm::FunctionType *FnTy = llvm::FunctionType::get(CGM.VoidTy,
-          {CGM.Int16Ty, CGM.Int32Ty, WorkID->getType()}, /*isVarArg*/ false);
+          {CGM.Int16Ty, CGM.Int32Ty, hashcode->getType()}, /*isVarArg*/ false);
         llvm::Constant *SelectWrapperFn = CGM.CreateRuntimeFunction(FnTy, 
           "select_outline_wrapper");
         CGF.EmitCallOrInvoke(SelectWrapperFn, {Bld.getInt16(0),
-          GetMasterThreadID(CGF),WorkID});
+          GetMasterThreadID(CGF),hashcode});
       } else {
       auto ParallelFnTy =
           llvm::FunctionType::get(CGM.VoidTy, {CGM.Int16Ty, CGM.Int32Ty},
