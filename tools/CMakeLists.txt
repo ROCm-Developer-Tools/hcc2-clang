@@ -10,6 +10,7 @@ add_clang_subdirectory(clang-import-test)
 add_clang_subdirectory(clang-offload-bundler)
 add_clang_subdirectory(clang-fixup-fatbin)
 add_clang_subdirectory(build-select)
+add_clang_subdirectory(set-linkage)
 
 add_clang_subdirectory(c-index-test)
 
