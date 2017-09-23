@@ -330,10 +330,18 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       LibPaths.push_back(Args.MakeArgString(
         "-L" + libamdgcn + "/" + gfx_name + "/lib"));
       LibPaths.push_back(Args.MakeArgString( "-L" + hcc2 + "/lib/libdevice"));
+
+      //openmp runtime deviceRTL
       addBCLib(C, Args, CmdArgs, LibPaths,
         Args.MakeArgString("libomptarget-amdgcn-" + gfx_name + ".bc"));
+      //atmi device runtime
+      addBCLib(C, Args, CmdArgs, LibPaths,
+        Args.MakeArgString("libatmi-" + gfx_name + ".bc"));
+      //cuda intrinsic wrapper
       addBCLib(C, Args, CmdArgs, LibPaths,
         Args.MakeArgString("libicuda2gcn-" + gfx_name  + ".bc"));
+
+      //amdgcn device lib
       addBCLib(C, Args, CmdArgs, LibPaths, "cuda2gcn.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "opencl.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "ockl.amdgcn.bc");
@@ -346,7 +354,9 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       addBCLib(C, Args, CmdArgs, LibPaths, "oclc_unsafe_math_off.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "hc.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "oclc_isa_version.amdgcn.bc");
+
       addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LINK_OPTS");
+
       //  CmdArgs.push_back("-suppress-warnings");
       // Add an intermediate output file which is input to opt
       CmdArgs.push_back("-o");
