@@ -390,6 +390,15 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         C.addCommand(llvm::make_unique<Command>(JA, *this,
           Args.MakeArgString(driver_dir + "/llvm-nm"), nmArgs, Inputs));
       }
+
+      // if (Args.hasArg(options::OPT_SAVELLCINPUT)) {
+      if (Args.hasArg(options::OPT_v)) {
+        ArgStringList cpArgs;
+        cpArgs.push_back(opt_outfn);
+        cpArgs.push_back("/tmp/llc_input.bc");
+        C.addCommand(llvm::make_unique<Command>(JA, *this,
+          Args.MakeArgString("/bin/cp"), cpArgs, Inputs));
+      }
     } // end of opt command
 
     { // llc
