@@ -326,6 +326,8 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           LibPaths.push_back(Args.MakeArgString(Current.c_str()));
         }
       }
+
+      // library search path
       addDirectoryList(Args, LibPaths, "-L", "LIBRARY_PATH");
       LibPaths.push_back(Args.MakeArgString(
         "-L" + libamdgcn + "/" + gfx_name + "/lib"));
@@ -334,15 +336,22 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       //openmp runtime deviceRTL
       addBCLib(C, Args, CmdArgs, LibPaths,
         Args.MakeArgString("libomptarget-amdgcn-" + gfx_name + ".bc"));
-      //atmi device runtime
-      addBCLib(C, Args, CmdArgs, LibPaths,
-        Args.MakeArgString("libatmi-" + gfx_name + ".bc"));
+
+      //cuda device wrapper
+      addBCLib(C, Args, CmdArgs, LibPaths, "cuda2gcn.amdgcn.bc");
+
       //cuda intrinsic wrapper
       addBCLib(C, Args, CmdArgs, LibPaths,
         Args.MakeArgString("libicuda2gcn-" + gfx_name  + ".bc"));
 
+      //atmi device runtime
+      addBCLib(C, Args, CmdArgs, LibPaths,
+        Args.MakeArgString("libatmi-" + gfx_name + ".bc"));
+
+      //HCC lib
+      addBCLib(C, Args, CmdArgs, LibPaths, "hc.amdgcn.bc");
+
       //amdgcn device lib
-      addBCLib(C, Args, CmdArgs, LibPaths, "cuda2gcn.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "opencl.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "ockl.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "irif.amdgcn.bc");
@@ -352,7 +361,6 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       addBCLib(C, Args, CmdArgs, LibPaths,
         "oclc_correctly_rounded_sqrt_on.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "oclc_unsafe_math_off.amdgcn.bc");
-      addBCLib(C, Args, CmdArgs, LibPaths, "hc.amdgcn.bc");
       addBCLib(C, Args, CmdArgs, LibPaths, "oclc_isa_version.amdgcn.bc");
 
       addEnvListWithSpaces(Args, CmdArgs, "CLANG_TARGET_LINK_OPTS");
