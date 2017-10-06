@@ -463,15 +463,15 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
       case CudaArch::SM_60: return "600";
       case CudaArch::SM_61: return "610";
       case CudaArch::SM_62: return "620";
-      case CudaArch::GFX700: return "700";
-      case CudaArch::GFX701: return "701";
-      case CudaArch::GFX800: return "800";
-      case CudaArch::GFX801: return "801";
-      case CudaArch::GFX802: return "802";
-      case CudaArch::GFX803: return "803";
-      case CudaArch::GFX810: return "810";
-      case CudaArch::GFX900: return "900";
-      case CudaArch::GFX901: return "901";
+      case CudaArch::GFX700: return "320";
+      case CudaArch::GFX701: return "320";
+      case CudaArch::GFX800: return "320";
+      case CudaArch::GFX801: return "320";
+      case CudaArch::GFX802: return "320";
+      case CudaArch::GFX803: return "320";
+      case CudaArch::GFX810: return "320";
+      case CudaArch::GFX900: return "320";
+      case CudaArch::GFX901: return "320";
       }
       llvm_unreachable("unhandled CudaArch");
     }();
