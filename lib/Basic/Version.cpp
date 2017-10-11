@@ -130,7 +130,7 @@ std::string getClangToolFullVersion(StringRef ToolName) {
 
   // If vendor supplied, include the base LLVM version as well.
 #ifdef CLANG_VENDOR
-  OS << " (based on " << BACKEND_PACKAGE_STRING << ")";
+  OS << " (based on HCC " << HCC2_VERSION_STRING << " )";
 #endif
 
   return OS.str();
