@@ -5553,6 +5553,9 @@ llvm::Value *EmitReduceScratchpadFunction(CodeGenModule &CGM,
       "_omp_reduction_load_and_reduce", &CGM.getModule());
   Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*DC=*/nullptr, Fn, CGFI);
+  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+  Fn->removeFnAttr(llvm::Attribute::NoInline);
+  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
   // user code.
@@ -5944,6 +5947,9 @@ EmitShuffleAndReduceFunction(CodeGenModule &CGM,
       "_omp_reduction_shuffle_and_reduce_func", &CGM.getModule());
   Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
+  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+  Fn->removeFnAttr(llvm::Attribute::NoInline);
+  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
   // user code.

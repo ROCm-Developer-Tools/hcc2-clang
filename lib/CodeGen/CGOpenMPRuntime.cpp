@@ -4670,6 +4670,9 @@ llvm::Value *CGOpenMPRuntime::emitReductionFunction(
       ".omp.reduction.reduction_func", &CGM.getModule());
   Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
+  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+  Fn->removeFnAttr(llvm::Attribute::NoInline);
+  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
   // user code.

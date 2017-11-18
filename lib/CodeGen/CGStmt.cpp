@@ -2292,6 +2292,9 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
     llvm::Function::Create(FuncLLVMTy, llvm::GlobalValue::InternalLinkage,
                            CapturedStmtInfo->getHelperName(), &CGM.getModule());
   CGM.SetInternalFunctionAttributes(CD, F, FuncInfo);
+  F->removeFnAttr(llvm::Attribute::OptimizeNone);
+  F->removeFnAttr(llvm::Attribute::NoInline);
+  F->addFnAttr(llvm::Attribute::AlwaysInline);
   if (CD->isNothrow())
     F->addFnAttr(llvm::Attribute::NoUnwind);
 
