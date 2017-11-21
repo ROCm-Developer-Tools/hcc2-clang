@@ -70,6 +70,8 @@ CudaInstallationDetector::CudaInstallationDetector(
       CudaPathCandidates.push_back(
           D.SysRoot + "/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v" +
           Ver);
+  } else if (char *env = ::getenv("CUDAPATH")) {
+    CudaPathCandidates.push_back(D.SysRoot + env);
   } else {
     CudaPathCandidates.push_back(D.SysRoot + "/usr/local/cuda");
     for (const char *Ver : Versions)
