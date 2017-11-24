@@ -574,6 +574,35 @@ void OmpDeviceToolChain::addClangTargetOptions(
   // came with CUDA-7.0.
   CC1Args.push_back("-target-feature");
   CC1Args.push_back("+ptx42");
+
+  if (DeviceOffloadingKind == Action::OFK_OpenMP) {
+    SmallVector<std::string, 8> LibraryPaths;
+    if (char *env = ::getenv("LIBRARY_PATH")) {
+      StringRef CompilerPath = env;
+      while (!CompilerPath.empty()) {
+        std::pair<StringRef, StringRef> Split =
+            CompilerPath.split(llvm::sys::EnvPathSeparator);
+        LibraryPaths.push_back(Split.first);
+        CompilerPath = Split.second;
+      }
+    }
+
+    std::string LibOmpTargetName = "libomptarget-nvptx.bc";
+    bool FoundBCLibrary = false;
+    for (std::string LibraryPath : LibraryPaths) {
+      SmallString<128> LibOmpTargetFile(LibraryPath);
+      llvm::sys::path::append(LibOmpTargetFile, LibOmpTargetName);
+      if (llvm::sys::fs::exists(LibOmpTargetFile)) {
+        CC1Args.push_back("-mlink-cuda-bitcode");
+        CC1Args.push_back(DriverArgs.MakeArgString(LibOmpTargetFile));
+        FoundBCLibrary = true;
+        break;
+      }
+    }
+    if (!FoundBCLibrary)
+      getDriver().Diag(diag::remark_drv_omp_offload_target_missingbcruntime);
+  }
+
 }
 
 void OmpDeviceToolChain::AddCudaIncludeArgs(const ArgList &DriverArgs,
