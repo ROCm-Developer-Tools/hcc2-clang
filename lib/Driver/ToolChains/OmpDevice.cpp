@@ -12,6 +12,7 @@
 #include "InputInfo.h"
 #include "clang/Basic/Cuda.h"
 #include "clang/Basic/VirtualFileSystem.h"
+#include "clang/Config/config.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
@@ -31,8 +32,24 @@ void OMPDEV::Backend::ConstructJob(Compilation &C, const JobAction &JA,
                                      const InputInfoList &Inputs,
                                      const ArgList &Args,
                                      const char *LinkingOutput) const {
+  const auto &TC =
+      static_cast<const toolchains::OmpDeviceToolChain &>(getToolChain());
+  assert( TC.getTriple().isGpu() && "Wrong platform");
 
-  assert(StringRef(JA.getOffloadingArch()).startswith("gfx") &&
+  // Obtain architecture from the action.
+  //CudaArch gpu_arch = StringToCudaArch(JA.getOffloadingArch());
+  StringRef GPUArchName;
+  if (JA.isDeviceOffloading(Action::OFK_OpenMP)) {
+    GPUArchName = Args.getLastArgValue(options::OPT_march_EQ);
+    assert(!GPUArchName.empty() && "Must have an architecture passed in.");
+  } else
+    GPUArchName = JA.getOffloadingArch();
+  CudaArch gpu_arch = StringToCudaArch(GPUArchName);
+  assert(gpu_arch != CudaArch::UNKNOWN &&
+         "Device action expected to have an architecture.");
+
+  //assert(StringRef(JA.getOffloadingArch()).startswith("gfx") &&
+  assert(GPUArchName.startswith("gfx") &&
     " unless gfx processor, backend should be clang") ;
 
   // For amdgcn, llc deferred to link phase so just disassemble the bc
@@ -58,12 +75,20 @@ void OMPDEV::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   assert( TC.getTriple().isGpu() && "Wrong platform");
 
   // Obtain architecture from the action.
-  CudaArch gpu_arch = StringToCudaArch(JA.getOffloadingArch());
+  //CudaArch gpu_arch = StringToCudaArch(JA.getOffloadingArch());
+  StringRef GPUArchName;
+  if (JA.isDeviceOffloading(Action::OFK_OpenMP)) {
+    GPUArchName = Args.getLastArgValue(options::OPT_march_EQ);
+    assert(!GPUArchName.empty() && "Must have an architecture passed in.");
+  } else
+    GPUArchName = JA.getOffloadingArch();
+  CudaArch gpu_arch = StringToCudaArch(GPUArchName);
   assert(gpu_arch != CudaArch::UNKNOWN &&
          "Device action expected to have an architecture.");
 
   // For amdgcn, call llvm-as
-  if (StringRef(JA.getOffloadingArch()).startswith("gfx")) {
+  //if (StringRef(JA.getOffloadingArch()).startswith("gfx")) {
+  if (GPUArchName.startswith("gfx")) {
     ArgStringList CmdArgs;
     for (InputInfoList::const_iterator
          it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
@@ -148,12 +173,21 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                  const InputInfoList &Inputs,
                                  const ArgList &Args,
                                  const char *LinkingOutput) const {
-
-  if (getToolChain().getArch() != llvm::Triple::amdgcn) {
-
   const auto &TC =
       static_cast<const toolchains::OmpDeviceToolChain &>(getToolChain());
-  assert(TC.getTriple().isNVPTX() && "Wrong platform");
+  assert( TC.getTriple().isGpu() && "Wrong platform");
+
+  StringRef GPUArchName;
+  if (JA.isDeviceOffloading(Action::OFK_OpenMP)) {
+    GPUArchName = Args.getLastArgValue(options::OPT_march_EQ);
+    assert(!GPUArchName.empty() && "Must have an architecture passed in.");
+  } else
+    GPUArchName = JA.getOffloadingArch();
+  CudaArch gpu_arch = StringToCudaArch(GPUArchName);
+  assert(gpu_arch != CudaArch::UNKNOWN &&
+         "Device action expected to have an architecture.");
+
+  if (getToolChain().getArch() != llvm::Triple::amdgcn) {
 
   ArgStringList CmdArgs;
 
@@ -175,6 +209,7 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     if (Args.hasArg(options::OPT_v))
       CmdArgs.push_back("-v");
 
+#if 0
     std::vector<std::string> gpu_archs =
         Args.getAllArgValues(options::OPT_march_EQ);
     assert(gpu_archs.size() == 1 && "Exactly one GPU Arch required for ptxas.");
@@ -182,6 +217,9 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     CmdArgs.push_back("-arch");
     CmdArgs.push_back(Args.MakeArgString(gpu_arch));
+#endif
+    CmdArgs.push_back("-arch");
+    CmdArgs.push_back(Args.MakeArgString(CudaArchToString(gpu_arch)));
 
     // add linking against library implementing OpenMP calls on OMPDEV target
     CmdArgs.push_back("-lomptarget-nvptx");
@@ -250,7 +288,7 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     auto *A = II.getAction();
     assert(A->getInputs().size() == 1 &&
            "Device offload action is expected to have a single input");
-    const char *gpu_arch_str = A->getOffloadingArch();
+    const char *gpu_arch_str = std::string(GPUArchName).c_str(); //A->getOffloadingArch();
     assert(gpu_arch_str &&
            "Device action expected to have associated a GPU architecture!");
     CudaArch gpu_arch = StringToCudaArch(gpu_arch_str);
@@ -274,23 +312,60 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     // ------------------  End of Linker::ConstructJob for nvptx ---------------
   } else {
     // ------------------  Start of Linker::ConstructJob for amdgcn ------------
+    int SaveTemps = C.getDriver().isSaveTempsEnabled();
 
     // For amdgcn, linker is llvm-link, opt, llc, and lld
     std::string driver_dir = std::string(C.getDriver().Dir);
-    std::string gfx_name = JA.getOffloadingArch();
+    std::string gfx_name = std::string(GPUArchName); //JA.getOffloadingArch();
     std::string hcc2 = getenv("HCC2") ? getenv("HCC2")
       : "/opt/rocm/hcc2" ;
     std::string libamdgcn = getenv("LIBAMDGCN") ? getenv("LIBAMDGCN")
       :"/opt/rocm/libamdgcn" ;
     std::string TmpName ;
-    TmpName = C.getDriver().GetTemporaryPath("OPT_INPUT", "bc");
-    const char *link_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
-    TmpName = C.getDriver().GetTemporaryPath("LLC_INPUT", "bc");
-    const char *opt_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
-    TmpName = C.getDriver().GetTemporaryPath("LLD_INPUT", "hsaco");
-    const char *llc_outfn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
-    TmpName = C.getDriver().GetTemporaryPath("BUILD_SELECT", "bc");
-    const char *select_fn = C.addTempFile(C.getArgs().MakeArgString(TmpName));
+
+    if (SaveTemps) {
+      TmpName = (std::string(Output.getFilename())+std::string(".llvm-link.bc")).c_str();
+    }
+    else {
+      TmpName = C.getDriver().GetTemporaryPath("OPT_INPUT", "bc");
+    }
+    const char *link_outfn = C.getArgs().MakeArgString(TmpName);
+    if (!SaveTemps) {
+      link_outfn = C.addTempFile(link_outfn);
+    }
+
+    if (SaveTemps) {
+      TmpName = (std::string(Output.getFilename())+std::string(".opt.bc")).c_str();
+    }
+    else {
+      TmpName = C.getDriver().GetTemporaryPath("LLC_INPUT", "bc");
+    }
+    const char *opt_outfn = C.getArgs().MakeArgString(TmpName);
+    if (!SaveTemps) {
+      opt_outfn = C.addTempFile(opt_outfn);
+    }
+
+    if (SaveTemps) {
+      TmpName = (std::string(Output.getFilename())+std::string(".hsaco")).c_str();
+    }
+    else {
+      TmpName = C.getDriver().GetTemporaryPath("LLD_INPUT", "hsaco");
+    }
+    const char *llc_outfn = C.getArgs().MakeArgString(TmpName);
+    if (!SaveTemps) {
+      llc_outfn = C.addTempFile(llc_outfn);
+    }
+
+    if (SaveTemps) {
+      TmpName = (std::string(Output.getFilename())+std::string(".build-select.bc")).c_str();
+    }
+    else {
+      TmpName = C.getDriver().GetTemporaryPath("BUILD_SELECT", "bc");
+    }
+    const char *select_fn = C.getArgs().MakeArgString(TmpName);
+    if (!SaveTemps) {
+      select_fn = C.addTempFile(select_fn);
+    }
 
     { // Build select_outline_wrapper function
       ArgStringList CmdArgs;
@@ -458,6 +533,10 @@ void OmpDeviceToolChain::addClangTargetOptions(
 
   HostTC.addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadingKind);
 
+  // Do not add the followoing features if gfx
+  if(getTriple().getArch() == llvm::Triple::amdgcn) {
+    return;
+  }
 
   if (DriverArgs.hasFlag(options::OPT_fcuda_flush_denormals_to_zero,
                          options::OPT_fno_cuda_flush_denormals_to_zero, false))
@@ -479,11 +558,13 @@ void OmpDeviceToolChain::addClangTargetOptions(
     return;
   }
 
+#if 0
   // Do not add -link-cuda-bitcode or ptx42 features if gfx
   for (Arg *A : DriverArgs)
     if( A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) &&
         StringRef(A->getValue()).startswith("gfx") )
       return;
+#endif
 
   CC1Args.push_back("-mlink-cuda-bitcode");
   CC1Args.push_back(DriverArgs.MakeArgString(LibDeviceFile));
@@ -556,6 +637,33 @@ OmpDeviceToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
     DAL->eraseArg(options::OPT_march_EQ);
     DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ), BoundArch);
   }
+
+  // If this is an OpenMP device we do not need to translate anything. We only
+  // need to append the gpu name.
+
+  // OMPDeviceToolChain is shared by GPU
+  assert(getTriple().isGpu() && "Wrong platform");
+
+  if (DeviceOffloadKind == Action::OFK_OpenMP) {
+    for (Arg *A : Args) {
+      DAL->append(A);
+    }
+
+    StringRef Arch = DAL->getLastArgValue(options::OPT_march_EQ);
+    if (Arch.empty()) {
+      if(getTriple().getArch() == llvm::Triple::amdgcn) {
+        DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ),
+            CLANG_OPENMP_AMDGCN_DEFAULT_ARCH);
+      }
+      if(getTriple().getArch() == llvm::Triple::nvptx ||
+          getTriple().getArch() == llvm::Triple::nvptx64) {
+        DAL->AddJoinedArg(nullptr, Opts.getOption(options::OPT_march_EQ),
+            CLANG_OPENMP_NVPTX_DEFAULT_ARCH);
+      }
+    }
+    //return DAL;
+  }
+
   return DAL;
 }
 

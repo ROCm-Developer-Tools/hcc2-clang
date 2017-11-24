@@ -376,7 +376,11 @@ bool ToolChain::needsProfileRT(const ArgList &Args) {
 Tool *ToolChain::SelectTool(const JobAction &JA) const {
   Action::ActionClass AC = JA.getKind();
   // The amdgcn Backend needs buildBackend()
-  if ( StringRef(JA.getOffloadingArch()).startswith("gfx") &&
+  //if ( StringRef(JA.getOffloadingArch()).startswith("gfx") &&
+  if((JA.isOffloading(Action::OFK_Cuda) ||
+        JA.isOffloading(Action::OFK_OpenMP)) &&
+      (StringRef(JA.getOffloadingArch()).startswith("gfx") ||
+       (getTriple().getArch() == llvm::Triple::amdgcn)) &&
        (AC == Action::BackendJobClass) ) {
     if ( (Args.hasArg(options::OPT_emit_llvm)) ||
           (Args.hasArg(options::OPT_emit_llvm_bc)) )

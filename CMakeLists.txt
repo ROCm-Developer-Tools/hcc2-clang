@@ -233,6 +233,25 @@ endif()
 set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
   "Default OpenMP runtime used by -fopenmp.")
 
+# OpenMP offloading for AMD GPU
+set(CLANG_OPENMP_AMDGCN_DEFAULT_ARCH "gfx803" CACHE STRING
+  "Default architecture for OpenMP offloading to AMD GPUs.")
+if (NOT("${CLANG_OPENMP_AMDGCN_DEFAULT_ARCH}" MATCHES "^gfx[0-9]+$"))
+  message(WARNING "Resetting default architecture for OpenMP offloading to AMD GPUs to gfx803")
+  set(CLANG_OPENMP_AMDGCN_DEFAULT_ARCH "gfx803" CACHE STRING
+    "Default architecture for OpenMP offloading to AMD GPUs." FORCE)
+endif()
+
+# OpenMP offloading requires at least sm_30 because we use shuffle instructions
+# to generate efficient code for reductions.
+set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_30" CACHE STRING
+  "Default architecture for OpenMP offloading to Nvidia GPUs.")
+if (NOT("${CLANG_OPENMP_NVPTX_DEFAULT_ARCH}" MATCHES "^sm_[0-9]+$"))
+  message(WARNING "Resetting default architecture for OpenMP offloading to Nvidia GPUs to sm_30")
+  set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_30" CACHE STRING
+    "Default architecture for OpenMP offloading to Nvidia GPUs." FORCE)
+endif()
+
 set(CLANG_VENDOR "HCC")
 
 if( CLANG_VENDOR )

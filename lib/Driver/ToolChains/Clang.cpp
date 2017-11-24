@@ -132,11 +132,15 @@ forAllAssociatedToolChains(Compilation &C, const JobAction &JA,
     Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
 
   if (JA.isHostOffloading(Action::OFK_OpenMP)) {
-    Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
+    //Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
+    auto TCs = C.getOffloadToolChains<Action::OFK_OpenMP>();
+    for (auto II = TCs.first, IE = TCs.second; II != IE; ++II)
+      Work(*II->second);
     return;
-  } else if (JA.isDeviceOffloading(Action::OFK_OpenMP))
-      Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
-
+  } else if (JA.isDeviceOffloading(Action::OFK_OpenMP)) {
+    //Work(*C.getSingleOffloadToolChain<Action::OFK_OpenMP>());
+    Work(*C.getSingleOffloadToolChain<Action::OFK_Host>());
+  }
   if (JA.isHostOffloading(Action::OFK_HCC))
     Work(*C.getSingleOffloadToolChain<Action::OFK_HCC>());
   else if (JA.isDeviceOffloading(Action::OFK_HCC))
@@ -5610,6 +5614,8 @@ void OffloadBundler::ConstructJobMultipleOutputs(
   for (unsigned I = 0; I < Outputs.size(); ++I) {
     if (I)
       UB += ',';
+    UB += Outputs[I].getFilename();
+    /*
     SmallString<256> OutputFileName(Outputs[I].getFilename());
     // Change extension of target files for OpenMP offloading
     // to NVIDIA GPUs.
@@ -5617,6 +5623,7 @@ void OffloadBundler::ConstructJobMultipleOutputs(
         JA.isOffloading(Action::OFK_OpenMP))
       llvm::sys::path::replace_extension(OutputFileName, "cubin");
     UB += OutputFileName;
+    */
   }
   CmdArgs.push_back(TCArgs.MakeArgString(UB));
   CmdArgs.push_back("-unbundle");

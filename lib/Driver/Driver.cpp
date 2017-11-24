@@ -2238,8 +2238,10 @@ class OffloadingActionBuilder final {
 
     ActionBuilderReturnCode addDeviceDepences(Action *HostAction) override {
 
+#if 0
       assert(!GpuArchList.empty() &&
                "We should have at least one GPU architecture.");
+#endif
 
       // If this is an input action replicate it for each OpenMP toolchain.
       if (auto *IA = dyn_cast<InputAction>(HostAction)) {
@@ -2255,10 +2257,14 @@ class OffloadingActionBuilder final {
         OpenMPDeviceActions.clear();
         for (unsigned I = 0; I < ToolChains.size(); ++I) {
           OpenMPDeviceActions.push_back(UA);
-          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
+          if (GpuArchList.size())
+            for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
+              UA->registerDependentActionInfo(
+                  ToolChains[I], CudaArchToString(GpuArchList[I]), Action::OFK_OpenMP);
+            }
+          else
             UA->registerDependentActionInfo(
-              ToolChains[I], CudaArchToString(GpuArchList[I]), Action::OFK_OpenMP);
-          }
+              ToolChains[I], /*BoundArch=*/StringRef(), Action::OFK_OpenMP);
         }
         return ABRT_Success;
       }
@@ -2278,9 +2284,12 @@ class OffloadingActionBuilder final {
         for (Action *&A : OpenMPDeviceActions) {
           assert(isa<CompileJobAction>(A));
           OffloadAction::DeviceDependences DDep;
-          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I)
-            DDep.add(*A, **TC, CudaArchToString(GpuArchList[I]),
-              Action::OFK_OpenMP);
+          if (GpuArchList.size())
+            for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I)
+              DDep.add(*A, **TC, CudaArchToString(GpuArchList[I]),
+                  Action::OFK_OpenMP);
+          else
+            DDep.add(*A, **TC, /*BoundArch=*/nullptr, Action::OFK_OpenMP);
           A = C.MakeAction<OffloadAction>(HDep, DDep);
           ++TC;
         }
@@ -2300,9 +2309,13 @@ class OffloadingActionBuilder final {
       auto TI = ToolChains.begin();
       for (auto *A : OpenMPDeviceActions) {
         OffloadAction::DeviceDependences Dep;
-        for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I)
-          Dep.add(*A, **TI, CudaArchToString(GpuArchList[I]),
-            Action::OFK_OpenMP);
+        if (GpuArchList.size()) {
+          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I)
+            Dep.add(*A, **TI, CudaArchToString(GpuArchList[I]),
+                Action::OFK_OpenMP);
+        }
+        else
+          Dep.add(*A, **TI, /*BoundArch=*/nullptr, Action::OFK_OpenMP);
         AL.push_back(C.MakeAction<OffloadAction>(Dep, A->getType()));
         ++TI;
       }
@@ -2317,11 +2330,18 @@ class OffloadingActionBuilder final {
       // Append a new link action for each device.
       auto TC = ToolChains.begin();
       for (auto &LI : DeviceLinkerInputs) {
-        for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
+        if (GpuArchList.size())
+          for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
+            auto *DeviceLinkAction =
+              C.MakeAction<LinkJobAction>(LI, types::TY_Image);
+            DA.add(*DeviceLinkAction, **TC, CudaArchToString(GpuArchList[I]),
+                Action::OFK_OpenMP);
+          }
+        else {
           auto *DeviceLinkAction =
             C.MakeAction<LinkJobAction>(LI, types::TY_Image);
-          DA.add(*DeviceLinkAction, **TC, CudaArchToString(GpuArchList[I]),
-            Action::OFK_OpenMP);
+          DA.add(*DeviceLinkAction, **TC, nullptr,
+              Action::OFK_OpenMP);
         }
         ++TC;
       }
@@ -2340,6 +2360,7 @@ class OffloadingActionBuilder final {
       // Collect all cuda_gpu_arch parameters, removing duplicates.
       std::set<CudaArch> GpuArchs;
       bool Error = false;
+#if 0
       for (Arg *A : Args) {
         if (!(A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) ||
               A->getOption().matches(options::OPT_no_cuda_gpu_arch_EQ)))
@@ -2373,7 +2394,7 @@ class OffloadingActionBuilder final {
       // suboptimally, on all newer GPUs.
       if (GpuArchList.empty())
         GpuArchList.push_back(CudaArch::SM_20);
-
+#endif
       return Error;
     }
 
@@ -3305,9 +3326,11 @@ class ToolSelector final {
 
     // Cannot combine compilation with backend for amdgcn backend
     if(( AJ->isOffloading(Action::OFK_Cuda) ||
-         AJ->isOffloading(Action::OFK_OpenMP)) &&
-      StringRef(AJ->getOffloadingArch()).startswith("gfx"))
+          AJ->isOffloading(Action::OFK_OpenMP)) &&
+        (StringRef(AJ->getOffloadingArch()).startswith("gfx") ||
+        TC.getTriple().getArch() == llvm::Triple::amdgcn)) {
       return nullptr;
+    }
 
     // Get compiler tool.
     const Tool *T = TC.SelectTool(*CJ);
@@ -3343,8 +3366,10 @@ class ToolSelector final {
     // Cannot combine assemble with backend for amdgcn backend
     if(( AJ->isOffloading(Action::OFK_Cuda) ||
          AJ->isOffloading(Action::OFK_OpenMP)) &&
-      StringRef(AJ->getOffloadingArch()).startswith("gfx"))
+        (StringRef(AJ->getOffloadingArch()).startswith("gfx") ||
+        TC.getTriple().getArch() == llvm::Triple::amdgcn)) {
       return nullptr;
+    }
 
     // Retrieve the compile job, backend action must always be preceded by one.
     ActionList CompileJobOffloadActions;
@@ -3382,7 +3407,8 @@ class ToolSelector final {
     // Cannot combine compilation with backend for amdgcn backend
     if((BJ->isOffloading(Action::OFK_Cuda) ||
          BJ->isOffloading(Action::OFK_OpenMP)) &&
-      StringRef(BJ->getOffloadingArch()).startswith("gfx"))
+        (StringRef(BJ->getOffloadingArch()).startswith("gfx") ||
+        TC.getTriple().getArch() == llvm::Triple::amdgcn)) {
       // It is necessary to combine when generating IR for compile-only with 
       // flags "-c -S -emit-llvm".  If only flags "-c -S" the gcn backend is 
       // needed to generate linked and opt IR for llc, so do not combine.
@@ -3390,6 +3416,7 @@ class ToolSelector final {
               C.getArgs().hasArg(options::OPT_S) &&
               C.getArgs().hasArg(options::OPT_emit_llvm)) )
         return nullptr;
+      }
 
     // Get compiler tool.
     const Tool *T = TC.SelectTool(*CJ);
