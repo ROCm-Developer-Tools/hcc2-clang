@@ -4643,6 +4643,13 @@ void CGOpenMPRuntime::emitReductionCombiner(CodeGenFunction &CGF,
   CGF.EmitIgnoredExpr(ReductionOp);
 }
 
+static void Dot2Underbar(llvm::Function* Fn) {
+  std::string name = Fn->getName().str();
+  replace(name.begin(),name.end(),'.', '_');
+  Fn->setName(name);
+  return;
+}
+
 llvm::Value *CGOpenMPRuntime::emitReductionFunction(
     CodeGenModule &CGM, llvm::Type *ArgsType, ArrayRef<const Expr *> Privates,
     ArrayRef<const Expr *> LHSExprs, ArrayRef<const Expr *> RHSExprs,
@@ -4661,6 +4668,7 @@ llvm::Value *CGOpenMPRuntime::emitReductionFunction(
   auto *Fn = llvm::Function::Create(
       CGM.getTypes().GetFunctionType(CGFI), llvm::GlobalValue::InternalLinkage,
       ".omp.reduction.reduction_func", &CGM.getModule());
+  Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
