@@ -990,7 +990,15 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
 
   if (ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) {
-    B.addAttribute(llvm::Attribute::OptimizeNone);
+    if (CodeGenOpts.OptimizationLevel != 0)
+      B.addAttribute(llvm::Attribute::OptimizeNone);
+    else {
+      // Change logic only in noopt case
+      // add OptimizeNone when it is marked NoInline
+      // in case some functions are marked inline by users
+      if(F->hasFnAttribute(llvm::Attribute::NoInline))
+        B.addAttribute(llvm::Attribute::OptimizeNone);
+    }
 
     // OptimizeNone implies noinline; we should not be inlining such functions.
     B.addAttribute(llvm::Attribute::NoInline);
