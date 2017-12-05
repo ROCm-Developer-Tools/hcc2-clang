@@ -265,6 +265,7 @@ private:
       setRequiresOMPRuntime();
       setMayContainOrphanedParallel();
       setHasAtMostOneNestedParallelInLexicalScope();
+      setHasTeamsReduction();
     };
 
     CGOpenMPRuntimeNVPTX::ExecutionMode getExecutionMode() const {
@@ -295,6 +296,8 @@ private:
 
     unsigned masterSharedDataSize() const { return MasterSharedDataSize; }
 
+    bool hasTeamsReduction() const { return HasTeamsReduction; }
+
   private:
     const CodeGenModule &CGM;
     const OMPExecutableDirective &D;
@@ -319,6 +322,8 @@ private:
     // Approximate the size in bytes of variables to be shared from master
     // to workers.
     unsigned MasterSharedDataSize;
+    // Indicate whether this target region has a teams reduction clause.
+    bool HasTeamsReduction;
 
     void setExecutionMode();
 
@@ -334,6 +339,8 @@ private:
     void setHasAtMostOneNestedParallelInLexicalScope();
 
     void setMasterSharedDataSize();
+
+    void setHasTeamsReduction();
   };
 
   class EntryFunctionState {
