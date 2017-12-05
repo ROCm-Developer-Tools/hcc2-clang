@@ -5222,6 +5222,29 @@ void CGOpenMPRuntime::emitTargetOutlinedFunction(
                                    IsOffloadEntry, CodeGen);
 }
 
+llvm::Function *
+CGOpenMPRuntime::outlineTargetDirective(const OMPExecutableDirective &D,
+                                        StringRef Name,
+                                        const RegionCodeGenTy &CodeGen) {
+  const CapturedStmt &CS = *cast<CapturedStmt>(D.getAssociatedStmt());
+
+  CodeGenFunction CGF(CGM, true);
+  CGOpenMPTargetRegionInfo CGInfo(CS, CodeGen, Name);
+  CodeGenFunction::CGCapturedStmtRAII CapInfoRAII(CGF, &CGInfo);
+
+  // When a target region has a depend clause, generate a new task
+  // that contains the target region invocation, instead of generating it in
+  // place. The task will take care of the depend logic.
+  bool HasDependClause = D.hasClausesOfKind<OMPDependClause>();
+  bool UseCapturedArgumentsOnly =
+      isOpenMPParallelDirective(D.getDirectiveKind()) ||
+      isOpenMPTeamsDirective(D.getDirectiveKind()) || HasDependClause;
+  return CGF.GenerateOpenMPCapturedStmtFunction(
+      CS, UseCapturedArgumentsOnly,
+      /*CaptureLevel=*/1, /*ImplicitParamStop=*/0,
+      CGM.getCodeGenOpts().OpenmpNonaliasedMaps);
+}
+
 void CGOpenMPRuntime::emitTargetOutlinedFunctionHelper(
     const OMPExecutableDirective &D, StringRef ParentName,
     llvm::Function *&OutlinedFn, llvm::Constant *&OutlinedFnID,
@@ -5247,19 +5270,8 @@ void CGOpenMPRuntime::emitTargetOutlinedFunctionHelper(
        << llvm::format("_%x_", FileID) << ParentName << "_l" << Line;
   }
 
-  const CapturedStmt &CS = *cast<CapturedStmt>(D.getAssociatedStmt());
-
-  CodeGenFunction CGF(CGM, true);
-  CGOpenMPTargetRegionInfo CGInfo(CS, CodeGen, EntryFnName);
-  CodeGenFunction::CGCapturedStmtRAII CapInfoRAII(CGF, &CGInfo);
-
-  bool UseCapturedArgumentsOnly =
-      isOpenMPParallelDirective(D.getDirectiveKind()) ||
-      isOpenMPTeamsDirective(D.getDirectiveKind());
-  OutlinedFn = CGF.GenerateOpenMPCapturedStmtFunction(
-      CS, UseCapturedArgumentsOnly,
-      /*CaptureLevel=*/1, /*ImplicitParamStop=*/0,
-      CGM.getCodeGenOpts().OpenmpNonaliasedMaps);
+  // Use outlineTargetDirective function
+  OutlinedFn = outlineTargetDirective(D, EntryFnName, CodeGen);
 
   // If this target outline function is not an offload entry, we don't need to
   // register it.

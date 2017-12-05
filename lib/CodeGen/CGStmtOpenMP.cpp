@@ -534,6 +534,75 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
   return F;
 }
 
+void CodeGenFunction::GenerateOpenMPCapturedStmtParameters(
+    const CapturedStmt &S, bool UseCapturedArgumentsOnly, unsigned CaptureLevel,
+    unsigned ImplicitParamStop, bool NonAliasedMaps, bool UIntPtrCastRequired,
+    FunctionArgList &Args) {
+  const CapturedDecl *CD = S.getCapturedDecl();
+  const RecordDecl *RD = S.getCapturedRecordDecl();
+  assert(CD->hasBody() && "missing CapturedDecl body");
+
+  // Build the argument list.
+  ASTContext &Ctx = CGM.getContext();
+  if (ImplicitParamStop == 0)
+    ImplicitParamStop = CD->getContextParamPosition();
+  if (!UseCapturedArgumentsOnly) {
+    Args.append(CD->param_begin(),
+                std::next(CD->param_begin(), ImplicitParamStop));
+  }
+  auto I = S.captures().begin();
+  for (auto *FD : RD->fields()) {
+    QualType ArgType = FD->getType();
+    IdentifierInfo *II = nullptr;
+    VarDecl *CapVar = nullptr;
+
+    if (I->capturesVariable() || I->capturesVariableByCopy()) {
+      CapVar = I->getCapturedVar();
+      if (auto *C = dyn_cast<OMPCapturedExprDecl>(CapVar)) {
+        // Check to see if the capture is to be a parameter in the
+        // outlined function at this level.
+        if (C->getCaptureLevel() < CaptureLevel) {
+          ++I;
+          continue;
+        }
+      }
+    }
+
+    // If this is a capture by copy and the type is not a pointer, the outlined
+    // function argument type should be uintptr and the value properly casted to
+    // uintptr. This is necessary given that the runtime library is only able to
+    // deal with pointers. We can pass in the same way the VLA type sizes to the
+    // outlined function.
+    if ((I->capturesVariableByCopy() && !ArgType->isAnyPointerType()) ||
+        I->capturesVariableArrayType()) {
+      if (UIntPtrCastRequired)
+        ArgType = Ctx.getUIntPtrType();
+    }
+
+    if (I->capturesVariable() || I->capturesVariableByCopy()) {
+      CapVar = I->getCapturedVar();
+      II = CapVar->getIdentifier();
+    } else if (I->capturesThis())
+      II = &Ctx.Idents.get("this");
+    else {
+      assert(I->capturesVariableArrayType());
+      II = &Ctx.Idents.get("vla");
+    }
+    if (ArgType->isVariablyModifiedType())
+      ArgType = getCanonicalParamType(Ctx, ArgType.getNonReferenceType());
+    if (NonAliasedMaps &&
+        (ArgType->isAnyPointerType() || ArgType->isReferenceType()))
+      ArgType = ArgType.withRestrict();
+    auto *Arg =
+        ImplicitParamDecl::Create(Ctx, /*DC=*/nullptr, FD->getLocation(), II,
+                                  ArgType, ImplicitParamDecl::Other);
+    Args.emplace_back(Arg);
+    ++I;
+  }
+  Args.append(std::next(CD->param_begin(), CD->getContextParamPosition() + 1),
+              CD->param_end());
+}
+
 //===----------------------------------------------------------------------===//
 //                              OpenMP Directive Emission
 //===----------------------------------------------------------------------===//
