@@ -15,12 +15,12 @@
 #include "CGOpenMPRuntimeNVPTX.h"
 #include "CGCleanup.h"
 #include "CodeGenFunction.h"
-#include "ConstantBuilder.h"
 #include "clang/AST/DeclOpenMP.h"
 #include "clang/AST/StmtOpenMP.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Basic/GpuGridValues.h"
+#include "clang/CodeGen/ConstantInitBuilder.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 using namespace clang;
