@@ -2466,8 +2466,15 @@ CGOpenMPRuntimeNVPTX::outlineTargetDirective(const OMPExecutableDirective &D,
   if (CD->isNothrow())
     WrapperFn->setDoesNotThrow();
 
+  // Add kernel callingConv
+  if ((Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn) &&
+      CGM.getLangOpts().OpenMPIsDevice)
+      WrapperFn->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
+  //WrapperFn->dump();
+
   WrapperCGF.StartFunction(CD, Ctx.VoidTy, WrapperFn, FuncInfo, Args,
                            CS.getLocStart(), CD->getBody()->getLocStart());
+  //WrapperFn->dump();
 
   // Initialize the teams reduction scratchpad.
   const OMPExecutableDirective &TD = *getTeamsDirective(WrapperCGF.CGM, D);

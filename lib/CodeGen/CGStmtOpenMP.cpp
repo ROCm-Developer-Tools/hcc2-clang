@@ -418,10 +418,6 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
   if (CD->isNothrow())
     F->addFnAttr(llvm::Attribute::NoUnwind);
 
-  if ((Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn) &&
-      CGM.getLangOpts().OpenMPIsDevice && isKernel)
-      F->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
-
   // Generate the function.
   StartFunction(CD, Ctx.VoidTy, F, FuncInfo, Args, CD->getLocation(),
                 CD->getBody()->getLocStart());
@@ -593,6 +589,27 @@ void CodeGenFunction::GenerateOpenMPCapturedStmtParameters(
     if (NonAliasedMaps &&
         (ArgType->isAnyPointerType() || ArgType->isReferenceType()))
       ArgType = ArgType.withRestrict();
+
+    // Adjust address space adjustment
+    if (CapVar &&
+        // CGM.getLangOpts().OpenMPIsDevice && isKernel &&
+        (Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)) {
+      // Need to set AS for reference kernel args
+      const clang::Type* ty  = ArgType.getTypePtr();
+      if( ty->isAnyPointerType() || ty->isReferenceType() ){
+        unsigned LLVM_AS = CapVar->getType().getAddressSpace();
+        unsigned LANG_AS = LangAS::cuda_device; // default
+        switch(LLVM_AS) {
+          case 0: break;
+          case 2/*AMDGPU_CONSTANT_ADDRSPACE*/: LANG_AS = LangAS::cuda_constant; break;
+          case 4/*AMDGPU_CONSTANT_ADDRSPACE*/: LANG_AS = LangAS::cuda_constant; break;
+          case 3/*AMDGPU_SHARED_ADDRSAPCE*/: LANG_AS = LangAS::cuda_shared; break;
+          default: assert("Unsupported address space in captured variable!"); break;
+        }
+        ArgType = Ctx.getAddrSpaceQualType(ArgType,LANG_AS);
+      }
+    }
+
     auto *Arg =
         ImplicitParamDecl::Create(Ctx, /*DC=*/nullptr, FD->getLocation(), II,
                                   ArgType, ImplicitParamDecl::Other);
