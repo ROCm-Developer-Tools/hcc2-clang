@@ -50,7 +50,7 @@ OpenMPClauseKind clang::getOpenMPClauseKind(StringRef Str) {
   // clause for 'flush' directive. If the 'flush' clause is explicitly specified
   // the Parser should generate a warning about extra tokens at the end of the
   // directive.
-  if (Str == "flush")
+  if (Str == "flush" || Str == "lastprivate_update")
     return OMPC_unknown;
   return llvm::StringSwitch<OpenMPClauseKind>(Str)
 #define OPENMP_CLAUSE(Name, Class) .Case(#Name, OMPC_##Name)
@@ -125,6 +125,11 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   .Case(#Name, static_cast<unsigned>(OMPC_DEFAULTMAP_MODIFIER_##Name))
 #include "clang/Basic/OpenMPKinds.def"
         .Default(OMPC_DEFAULTMAP_unknown);
+  case OMPC_lastprivate:
+    return llvm::StringSwitch<OpenMPLastprivateClauseKind>(Str)
+#define OPENMP_LASTPRIVATE_MODIFIER(Name) .Case(#Name, OMPC_LASTPRIVATE_##Name)
+#include "clang/Basic/OpenMPKinds.def"
+        .Default(OMPC_LASTPRIVATE_unknown);
   case OMPC_unknown:
   case OMPC_threadprivate:
   case OMPC_if:
@@ -135,7 +140,6 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_collapse:
   case OMPC_private:
   case OMPC_firstprivate:
-  case OMPC_lastprivate:
   case OMPC_shared:
   case OMPC_reduction:
   case OMPC_aligned:
@@ -146,6 +150,7 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_untied:
   case OMPC_mergeable:
   case OMPC_flush:
+  case OMPC_lastprivate_update:
   case OMPC_read:
   case OMPC_write:
   case OMPC_update:
@@ -166,6 +171,8 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
   case OMPC_from:
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
+  case OMPC_task_reduction:
+  case OMPC_in_reduction:
     break;
   }
   llvm_unreachable("Invalid OpenMP simple clause kind");
@@ -264,6 +271,18 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
 #include "clang/Basic/OpenMPKinds.def"
     }
     llvm_unreachable("Invalid OpenMP 'schedule' clause type");
+  case OMPC_lastprivate:
+    switch (Type) {
+    case OMPC_LASTPRIVATE_unknown:
+      return "unknown";
+#define OPENMP_LASTPRIVATE_MODIFIER(Name)                                    \
+  case OMPC_LASTPRIVATE_##Name:                                              \
+    return #Name;
+#include "clang/Basic/OpenMPKinds.def"
+    default:
+      break;
+    }
+    llvm_unreachable("Invalid OpenMP 'lastprivate' clause type");
   case OMPC_unknown:
   case OMPC_threadprivate:
   case OMPC_if:
@@ -274,7 +293,6 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_collapse:
   case OMPC_private:
   case OMPC_firstprivate:
-  case OMPC_lastprivate:
   case OMPC_shared:
   case OMPC_reduction:
   case OMPC_aligned:
@@ -285,6 +303,7 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_untied:
   case OMPC_mergeable:
   case OMPC_flush:
+  case OMPC_lastprivate_update:
   case OMPC_read:
   case OMPC_write:
   case OMPC_update:
@@ -305,6 +324,8 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_from:
   case OMPC_use_device_ptr:
   case OMPC_is_device_ptr:
+  case OMPC_task_reduction:
+  case OMPC_in_reduction:
     break;
   }
   llvm_unreachable("Invalid OpenMP simple clause kind");
@@ -417,6 +438,9 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
     break;
   case OMPD_flush:
     return CKind == OMPC_flush;
+    break;
+  case OMPD_lastprivate_update:
+    return CKind == OMPC_lastprivate_update;
     break;
   case OMPD_atomic:
     switch (CKind) {
@@ -710,6 +734,26 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
       break;
     }
     break;
+  case OMPD_taskwait:
+    switch (CKind) {
+#define OPENMP_TASKWAIT_CLAUSE(Name)                                           \
+    case OMPC_##Name:                                                          \
+      return true;
+#include "clang/Basic/OpenMPKinds.def"
+    default:
+      break;
+    }
+    break;
+  case OMPD_taskgroup:
+    switch (CKind) {
+#define OPENMP_TASKGROUP_CLAUSE(Name)                                          \
+  case OMPC_##Name:                                                            \
+    return true;
+#include "clang/Basic/OpenMPKinds.def"
+    default:
+      break;
+    }
+    break;
   case OMPD_declare_target:
   case OMPD_end_declare_target:
   case OMPD_unknown:
@@ -718,8 +762,6 @@ bool clang::isAllowedClauseForDirective(OpenMPDirectiveKind DKind,
   case OMPD_master:
   case OMPD_taskyield:
   case OMPD_barrier:
-  case OMPD_taskwait:
-  case OMPD_taskgroup:
   case OMPD_cancellation_point:
   case OMPD_declare_reduction:
     break;
@@ -842,7 +884,8 @@ bool clang::isOpenMPDistributeDirective(OpenMPDirectiveKind Kind) {
 bool clang::isOpenMPPrivate(OpenMPClauseKind Kind) {
   return Kind == OMPC_private || Kind == OMPC_firstprivate ||
          Kind == OMPC_lastprivate || Kind == OMPC_linear ||
-         Kind == OMPC_reduction; // TODO add next clauses like 'reduction'.
+         Kind == OMPC_reduction || Kind == OMPC_task_reduction ||
+         Kind == OMPC_in_reduction; // TODO add next clauses like 'reduction'.
 }
 
 bool clang::isOpenMPThreadPrivate(OpenMPClauseKind Kind) {
@@ -864,83 +907,14 @@ bool clang::isOpenMPLoopBoundSharingDirective(OpenMPDirectiveKind Kind) {
          Kind == OMPD_target_teams_distribute_simd;
 }
 
-
-void clang::getOpenMPCaptureRegions(
-    SmallVectorImpl<OpenMPDirectiveKind> &CaptureRegions,
-    OpenMPDirectiveKind DKind) {
-  assert(DKind <= OMPD_unknown);
-  switch (DKind) {
-  case OMPD_parallel:
-  case OMPD_parallel_for:
-  case OMPD_parallel_for_simd:
-  case OMPD_parallel_sections:
-  case OMPD_distribute_parallel_for:
-    CaptureRegions.push_back(OMPD_parallel);
-    break;
-  case OMPD_target_teams:
-    CaptureRegions.push_back(OMPD_target);
-    CaptureRegions.push_back(OMPD_teams);
-    break;
-  case OMPD_teams:
-  case OMPD_simd:
-  case OMPD_for:
-  case OMPD_for_simd:
-  case OMPD_sections:
-  case OMPD_section:
-  case OMPD_single:
-  case OMPD_master:
-  case OMPD_critical:
-  case OMPD_taskgroup:
-  case OMPD_distribute:
-  case OMPD_ordered:
-  case OMPD_atomic:
-  case OMPD_target_data:
-  case OMPD_target:
-  case OMPD_target_parallel_for:
-  case OMPD_target_parallel_for_simd:
-  case OMPD_target_simd:
-  case OMPD_task:
-  case OMPD_taskloop:
-  case OMPD_taskloop_simd:
-  case OMPD_distribute_parallel_for_simd:
-  case OMPD_distribute_simd:
-  case OMPD_teams_distribute:
-  case OMPD_teams_distribute_simd:
-  case OMPD_teams_distribute_parallel_for_simd:
-  case OMPD_teams_distribute_parallel_for:
-  case OMPD_target_teams_distribute:
-  case OMPD_target_teams_distribute_parallel_for:
-  case OMPD_target_teams_distribute_parallel_for_simd:
-  case OMPD_target_teams_distribute_simd:
-    CaptureRegions.push_back(DKind);
-    break;
-  case OMPD_target_parallel:
-    CaptureRegions.push_back(OMPD_target);
-    CaptureRegions.push_back(OMPD_parallel);
-    break;
-  case OMPD_threadprivate:
-  case OMPD_taskyield:
-  case OMPD_barrier:
-  case OMPD_taskwait:
-  case OMPD_cancellation_point:
-  case OMPD_cancel:
-  case OMPD_flush:
-  case OMPD_target_enter_data:
-  case OMPD_target_exit_data:
-  case OMPD_declare_reduction:
-  case OMPD_declare_simd:
-  case OMPD_declare_target:
-  case OMPD_end_declare_target:
-  case OMPD_target_update:
-    llvm_unreachable("OpenMP Directive is not allowed");
-  case OMPD_unknown:
-    llvm_unreachable("Unknown OpenMP directive");
-  }
-}
-
 bool clang::requiresAdditionalIterationVar(OpenMPDirectiveKind DKind) {
   return DKind == OMPD_distribute_simd || DKind == OMPD_teams_distribute_simd ||
          DKind == OMPD_target_teams_distribute_simd ||
          DKind == OMPD_teams_distribute_parallel_for_simd;
   // TODO add more directives if we detect any other cases.
+}
+
+bool clang::isOpenMPConditionalLastprivateDirective(OpenMPDirectiveKind DKind) {
+  return DKind == OMPD_for || DKind == OMPD_simd || DKind == OMPD_sections ||
+         DKind == OMPD_parallel_sections;
 }

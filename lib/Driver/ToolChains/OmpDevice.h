@@ -12,6 +12,7 @@
 
 #include "Cuda.h"
 #include "clang/Basic/VersionTuple.h"
+#include "clang/Basic/DebugInfoOptions.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/Multilib.h"
 #include "clang/Driver/ToolChain.h"

@@ -1617,8 +1617,12 @@ public:
   OMPClause *RebuildOMPLastprivateClause(ArrayRef<Expr *> VarList,
                                          SourceLocation StartLoc,
                                          SourceLocation LParenLoc,
+                                         OpenMPLastprivateClauseKind Modifier,
+                                         SourceLocation ModifierLoc,
+                                         SourceLocation ColonLoc,
                                          SourceLocation EndLoc) {
     return getSema().ActOnOpenMPLastprivateClause(VarList, StartLoc, LParenLoc,
+                                                  Modifier, ModifierLoc, ColonLoc,
                                                   EndLoc);
   }
 
@@ -1651,36 +1655,6 @@ public:
         ReductionId, UnresolvedReductions);
   }
 
-  /// Build a new OpenMP 'task_reduction' clause.
-  ///
-  /// By default, performs semantic analysis to build the new statement.
-  /// Subclasses may override this routine to provide different behavior.
-  OMPClause *RebuildOMPTaskReductionClause(
-      ArrayRef<Expr *> VarList, SourceLocation StartLoc,
-      SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
-      CXXScopeSpec &ReductionIdScopeSpec,
-      const DeclarationNameInfo &ReductionId,
-      ArrayRef<Expr *> UnresolvedReductions) {
-    return getSema().ActOnOpenMPTaskReductionClause(
-        VarList, StartLoc, LParenLoc, ColonLoc, EndLoc, ReductionIdScopeSpec,
-        ReductionId, UnresolvedReductions);
-  }
-
-  /// Build a new OpenMP 'in_reduction' clause.
-  ///
-  /// By default, performs semantic analysis to build the new statement.
-  /// Subclasses may override this routine to provide different behavior.
-  OMPClause *
-  RebuildOMPInReductionClause(ArrayRef<Expr *> VarList, SourceLocation StartLoc,
-                              SourceLocation LParenLoc, SourceLocation ColonLoc,
-                              SourceLocation EndLoc,
-                              CXXScopeSpec &ReductionIdScopeSpec,
-                              const DeclarationNameInfo &ReductionId,
-                              ArrayRef<Expr *> UnresolvedReductions) {
-    return getSema().ActOnOpenMPInReductionClause(
-        VarList, StartLoc, LParenLoc, ColonLoc, EndLoc, ReductionIdScopeSpec,
-        ReductionId, UnresolvedReductions);
-  }
 
   /// \brief Build a new OpenMP 'linear' clause.
   ///
@@ -1745,6 +1719,18 @@ public:
                                    SourceLocation EndLoc) {
     return getSema().ActOnOpenMPFlushClause(VarList, StartLoc, LParenLoc,
                                             EndLoc);
+  }
+
+  /// \brief Build a new OpenMP 'lastprivate_update' pseudo clause.
+  ///
+  /// By default, performs semantic analysis to build the new OpenMP clause.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPLastprivateUpdateClause(ArrayRef<Expr *> VarList,
+                                               SourceLocation StartLoc,
+                                               SourceLocation LParenLoc,
+                                               SourceLocation EndLoc) {
+    return getSema().ActOnOpenMPLastprivateUpdateClause(VarList, StartLoc,
+                                                        LParenLoc, EndLoc);
   }
 
   /// \brief Build a new OpenMP 'depend' pseudo clause.
@@ -1910,6 +1896,37 @@ public:
                                          SourceLocation EndLoc) {
     return getSema().ActOnOpenMPIsDevicePtrClause(VarList, StartLoc, LParenLoc,
                                                   EndLoc);
+  }
+
+  /// Build a new OpenMP 'task_reduction' clause.
+  ///
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *RebuildOMPTaskReductionClause(
+      ArrayRef<Expr *> VarList, SourceLocation StartLoc,
+      SourceLocation LParenLoc, SourceLocation ColonLoc, SourceLocation EndLoc,
+      CXXScopeSpec &ReductionIdScopeSpec,
+      const DeclarationNameInfo &ReductionId,
+      ArrayRef<Expr *> UnresolvedReductions) {
+    return getSema().ActOnOpenMPTaskReductionClause(
+        VarList, StartLoc, LParenLoc, ColonLoc, EndLoc, ReductionIdScopeSpec,
+        ReductionId, UnresolvedReductions);
+  }
+
+  /// \brief Build a new OpenMP 'in_reduction' clause.
+  ///
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  OMPClause *
+  RebuildOMPInReductionClause(ArrayRef<Expr *> VarList, SourceLocation StartLoc,
+                              SourceLocation LParenLoc, SourceLocation ColonLoc,
+                              SourceLocation EndLoc,
+                              CXXScopeSpec &ReductionIdScopeSpec,
+                              const DeclarationNameInfo &ReductionId,
+                              ArrayRef<Expr *> UnresolvedReductions) {
+    return getSema().ActOnOpenMPInReductionClause(
+        VarList, StartLoc, LParenLoc, ColonLoc, EndLoc, ReductionIdScopeSpec,
+        ReductionId, UnresolvedReductions);
   }
 
   /// \brief Rebuild the operand to an Objective-C \@synchronized statement.
@@ -7567,6 +7584,7 @@ StmtResult TreeTransform<Derived>::TransformOMPExecutableDirective(
   llvm::SmallVector<OMPClause *, 16> TClauses;
   ArrayRef<OMPClause *> Clauses = D->clauses();
   TClauses.reserve(Clauses.size());
+  bool HasDependClause = D->hasClausesOfKind<OMPDependClause>();
   for (ArrayRef<OMPClause *>::iterator I = Clauses.begin(), E = Clauses.end();
        I != E; ++I) {
     if (*I) {
@@ -7582,19 +7600,21 @@ StmtResult TreeTransform<Derived>::TransformOMPExecutableDirective(
   StmtResult AssociatedStmt;
   if (D->hasAssociatedStmt() && D->getAssociatedStmt()) {
     getDerived().getSema().ActOnOpenMPRegionStart(D->getDirectiveKind(),
-                                                  /*CurScope=*/nullptr);
+                                                  /*CurScope=*/nullptr,
+                                                  HasDependClause);
     StmtResult Body;
     {
       Sema::CompoundScopeRAII CompoundScope(getSema());
-      int ThisCaptureLevel =
-          Sema::getOpenMPCaptureLevels(D->getDirectiveKind());
+      // FIXME, need to get Capture level
+      // int ThisCaptureLevel =
+      //    Sema::getOpenMPCaptureLevels(D->getDirectiveKind());
       Stmt *CS = D->getAssociatedStmt();
-      while (--ThisCaptureLevel >= 0)
-        CS = cast<CapturedStmt>(CS)->getCapturedStmt();
+      // while (--ThisCaptureLevel >= 0)
+      CS = cast<CapturedStmt>(CS)->getCapturedStmt();
       Body = getDerived().TransformStmt(CS);
     }
-    AssociatedStmt =
-        getDerived().getSema().ActOnOpenMPRegionEnd(Body, TClauses);
+    AssociatedStmt = getDerived().getSema().ActOnOpenMPRegionEnd(
+        Body, TClauses, HasDependClause);
     if (AssociatedStmt.isInvalid()) {
       return StmtError();
     }
@@ -7813,6 +7833,17 @@ TreeTransform<Derived>::TransformOMPFlushDirective(OMPFlushDirective *D) {
   DeclarationNameInfo DirName;
   getDerived().getSema().StartOpenMPDSABlock(OMPD_flush, DirName, nullptr,
                                              D->getLocStart());
+  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
+  getDerived().getSema().EndOpenMPDSABlock(Res.get());
+  return Res;
+}
+
+template <typename Derived>
+StmtResult TreeTransform<Derived>::TransformOMPLastprivateUpdateDirective(
+    OMPLastprivateUpdateDirective *D) {
+  DeclarationNameInfo DirName;
+  getDerived().getSema().StartOpenMPDSABlock(OMPD_lastprivate_update, DirName,
+                                             nullptr, D->getLocStart());
   StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
   getDerived().getSema().EndOpenMPDSABlock(Res.get());
   return Res;
@@ -8365,7 +8396,8 @@ TreeTransform<Derived>::TransformOMPLastprivateClause(OMPLastprivateClause *C) {
     Vars.push_back(EVar.get());
   }
   return getDerived().RebuildOMPLastprivateClause(
-      Vars, C->getLocStart(), C->getLParenLoc(), C->getLocEnd());
+      Vars, C->getLocStart(), C->getLParenLoc(), C->getModifier(),
+      C->getModifierLoc(), C->getColonLoc(), C->getLocEnd());
 }
 
 template <typename Derived>
@@ -8605,6 +8637,21 @@ OMPClause *TreeTransform<Derived>::TransformOMPFlushClause(OMPFlushClause *C) {
 }
 
 template <typename Derived>
+OMPClause *TreeTransform<Derived>::TransformOMPLastprivateUpdateClause(
+    OMPLastprivateUpdateClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (auto *VE : C->varlists()) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(VE));
+    if (EVar.isInvalid())
+      return nullptr;
+    Vars.push_back(EVar.get());
+  }
+  return getDerived().RebuildOMPLastprivateUpdateClause(
+      Vars, C->getLocStart(), C->getLParenLoc(), C->getLocEnd());
+}
+
+template <typename Derived>
 OMPClause *
 TreeTransform<Derived>::TransformOMPDependClause(OMPDependClause *C) {
   llvm::SmallVector<Expr *, 16> Vars;
@@ -8778,6 +8825,96 @@ TreeTransform<Derived>::TransformOMPIsDevicePtrClause(OMPIsDevicePtrClause *C) {
   }
   return getDerived().RebuildOMPIsDevicePtrClause(
       Vars, C->getLocStart(), C->getLParenLoc(), C->getLocEnd());
+}
+
+template <typename Derived>
+OMPClause *TreeTransform<Derived>::TransformOMPTaskReductionClause(
+    OMPTaskReductionClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (auto *VE : C->varlists()) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(VE));
+    if (EVar.isInvalid())
+      return nullptr;
+    Vars.push_back(EVar.get());
+  }
+  CXXScopeSpec ReductionIdScopeSpec;
+  ReductionIdScopeSpec.Adopt(C->getQualifierLoc());
+
+  DeclarationNameInfo NameInfo = C->getNameInfo();
+  if (NameInfo.getName()) {
+    NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
+    if (!NameInfo.getName())
+      return nullptr;
+  }
+  // Build a list of all UDR decls with the same names ranged by the Scopes.
+  // The Scope boundary is a duplication of the previous decl.
+  llvm::SmallVector<Expr *, 16> UnresolvedReductions;
+  for (auto *E : C->reduction_ops()) {
+    // Transform all the decls.
+    if (E) {
+      auto *ULE = cast<UnresolvedLookupExpr>(E);
+      UnresolvedSet<8> Decls;
+      for (auto *D : ULE->decls()) {
+        NamedDecl *InstD =
+            cast<NamedDecl>(getDerived().TransformDecl(E->getExprLoc(), D));
+        Decls.addDecl(InstD, InstD->getAccess());
+      }
+      UnresolvedReductions.push_back(UnresolvedLookupExpr::Create(
+          SemaRef.Context, /*NamingClass=*/nullptr,
+          ReductionIdScopeSpec.getWithLocInContext(SemaRef.Context), NameInfo,
+          /*ADL=*/true, ULE->isOverloaded(), Decls.begin(), Decls.end()));
+    } else
+      UnresolvedReductions.push_back(nullptr);
+  }
+  return getDerived().RebuildOMPTaskReductionClause(
+      Vars, C->getLocStart(), C->getLParenLoc(), C->getColonLoc(),
+      C->getLocEnd(), ReductionIdScopeSpec, NameInfo, UnresolvedReductions);
+}
+
+template <typename Derived>
+OMPClause *
+TreeTransform<Derived>::TransformOMPInReductionClause(OMPInReductionClause *C) {
+  llvm::SmallVector<Expr *, 16> Vars;
+  Vars.reserve(C->varlist_size());
+  for (auto *VE : C->varlists()) {
+    ExprResult EVar = getDerived().TransformExpr(cast<Expr>(VE));
+    if (EVar.isInvalid())
+      return nullptr;
+    Vars.push_back(EVar.get());
+  }
+  CXXScopeSpec ReductionIdScopeSpec;
+  ReductionIdScopeSpec.Adopt(C->getQualifierLoc());
+
+  DeclarationNameInfo NameInfo = C->getNameInfo();
+  if (NameInfo.getName()) {
+    NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
+    if (!NameInfo.getName())
+      return nullptr;
+  }
+  // Build a list of all UDR decls with the same names ranged by the Scopes.
+  // The Scope boundary is a duplication of the previous decl.
+  llvm::SmallVector<Expr *, 16> UnresolvedReductions;
+  for (auto *E : C->reduction_ops()) {
+    // Transform all the decls.
+    if (E) {
+      auto *ULE = cast<UnresolvedLookupExpr>(E);
+      UnresolvedSet<8> Decls;
+      for (auto *D : ULE->decls()) {
+        NamedDecl *InstD =
+            cast<NamedDecl>(getDerived().TransformDecl(E->getExprLoc(), D));
+        Decls.addDecl(InstD, InstD->getAccess());
+      }
+      UnresolvedReductions.push_back(UnresolvedLookupExpr::Create(
+          SemaRef.Context, /*NamingClass=*/nullptr,
+          ReductionIdScopeSpec.getWithLocInContext(SemaRef.Context), NameInfo,
+          /*ADL=*/true, ULE->isOverloaded(), Decls.begin(), Decls.end()));
+    } else
+      UnresolvedReductions.push_back(nullptr);
+  }
+  return getDerived().RebuildOMPInReductionClause(
+      Vars, C->getLocStart(), C->getLParenLoc(), C->getColonLoc(),
+      C->getLocEnd(), ReductionIdScopeSpec, NameInfo, UnresolvedReductions);
 }
 
 //===----------------------------------------------------------------------===//

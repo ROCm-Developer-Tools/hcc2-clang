@@ -463,6 +463,7 @@ void AMDGPUTargetInfo::getTargetDefines(const LangOptions &Opts,
       case CudaArch::SM_60: return "600";
       case CudaArch::SM_61: return "610";
       case CudaArch::SM_62: return "620";
+      case CudaArch::SM_70: return "700";
       case CudaArch::GFX700: return "320";
       case CudaArch::GFX701: return "320";
       case CudaArch::GFX800: return "320";

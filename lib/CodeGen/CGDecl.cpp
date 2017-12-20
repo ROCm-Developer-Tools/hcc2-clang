@@ -26,6 +26,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclOpenMP.h"
+#include "clang/AST/OpenMPClause.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/CodeGen/CGFunctionInfo.h"
@@ -1138,6 +1139,19 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     llvm::Type *llvmTy = ConvertTypeForMem(elementType);
 
     // Allocate memory for the array.
+    llvm::AllocaInst *vla = Builder.CreateAlloca(llvmTy, elementCount, "vla");
+    vla->setAlignment(alignment.getQuantity());
+    if (getLangOpts().NansInject && CurFuncDecl &&
+        !CurFuncDecl->hasAttr<NoInstrumentFunctionAttr>()) {
+      EmitNaNsInit(alignment,
+                   Builder.CreateNUWMul(
+                       Builder.CreateIntCast(elementCount, CGM.SizeTy,
+                                             /*isSigned=*/false),
+                       Builder.CreateIntCast(getTypeSize(elementType),
+                                             CGM.SizeTy, /*isSigned=*/false)),
+                   vla);
+    }
+
     address = CreateTempAlloca(llvmTy, alignment, "vla", elementCount);
   }
 

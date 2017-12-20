@@ -804,6 +804,13 @@ void OMPClausePrinter::VisitOMPFirstprivateClause(OMPFirstprivateClause *Node) {
 void OMPClausePrinter::VisitOMPLastprivateClause(OMPLastprivateClause *Node) {
   if (!Node->varlist_empty()) {
     OS << "lastprivate";
+    if (Node->getModifier() != OMPC_LASTPRIVATE_unknown) {
+      OS << '(';
+      OS << getOpenMPSimpleClauseTypeName(OMPC_lastprivate,
+                                          Node->getModifier());
+      OS << ':';
+      VisitOMPClauseList(Node, ' ');
+    } else
     VisitOMPClauseList(Node, '(');
     OS << ")";
   }
@@ -838,53 +845,6 @@ void OMPClausePrinter::VisitOMPReductionClause(OMPReductionClause *Node) {
     OS << ")";
   }
 }
-
-#if 0
-void OMPClausePrinter::VisitOMPTaskReductionClause(
-    OMPTaskReductionClause *Node) {
-  if (!Node->varlist_empty()) {
-    OS << "task_reduction(";
-    NestedNameSpecifier *QualifierLoc =
-        Node->getQualifierLoc().getNestedNameSpecifier();
-    OverloadedOperatorKind OOK =
-        Node->getNameInfo().getName().getCXXOverloadedOperator();
-    if (QualifierLoc == nullptr && OOK != OO_None) {
-      // Print reduction identifier in C format
-      OS << getOperatorSpelling(OOK);
-    } else {
-      // Use C++ format
-      if (QualifierLoc != nullptr)
-        QualifierLoc->print(OS, Policy);
-      OS << Node->getNameInfo();
-    }
-    OS << ":";
-    VisitOMPClauseList(Node, ' ');
-    OS << ")";
-  }
-}
-
-void OMPClausePrinter::VisitOMPInReductionClause(OMPInReductionClause *Node) {
-  if (!Node->varlist_empty()) {
-    OS << "in_reduction(";
-    NestedNameSpecifier *QualifierLoc =
-        Node->getQualifierLoc().getNestedNameSpecifier();
-    OverloadedOperatorKind OOK =
-        Node->getNameInfo().getName().getCXXOverloadedOperator();
-    if (QualifierLoc == nullptr && OOK != OO_None) {
-      // Print reduction identifier in C format
-      OS << getOperatorSpelling(OOK);
-    } else {
-      // Use C++ format
-      if (QualifierLoc != nullptr)
-        QualifierLoc->print(OS, Policy);
-      OS << Node->getNameInfo();
-    }
-    OS << ":";
-    VisitOMPClauseList(Node, ' ');
-    OS << ")";
-  }
-}
-#endif
 
 void OMPClausePrinter::VisitOMPLinearClause(OMPLinearClause *Node) {
   if (!Node->varlist_empty()) {
@@ -937,6 +897,11 @@ void OMPClausePrinter::VisitOMPFlushClause(OMPFlushClause *Node) {
     VisitOMPClauseList(Node, '(');
     OS << ")";
   }
+}
+
+void OMPClausePrinter::VisitOMPLastprivateUpdateClause(
+    OMPLastprivateUpdateClause *Node) {
+  // This is an internal clause.  Don't print anything.
 }
 
 void OMPClausePrinter::VisitOMPDependClause(OMPDependClause *Node) {
@@ -1015,6 +980,51 @@ void OMPClausePrinter::VisitOMPIsDevicePtrClause(OMPIsDevicePtrClause *Node) {
   if (!Node->varlist_empty()) {
     OS << "is_device_ptr";
     VisitOMPClauseList(Node, '(');
+    OS << ")";
+  }
+}
+
+void OMPClausePrinter::VisitOMPTaskReductionClause(
+    OMPTaskReductionClause *Node) {
+  if (!Node->varlist_empty()) {
+    OS << "task_reduction(";
+    NestedNameSpecifier *QualifierLoc =
+        Node->getQualifierLoc().getNestedNameSpecifier();
+    OverloadedOperatorKind OOK =
+        Node->getNameInfo().getName().getCXXOverloadedOperator();
+    if (QualifierLoc == nullptr && OOK != OO_None) {
+      // Print reduction identifier in C format
+      OS << getOperatorSpelling(OOK);
+    } else {
+      // Use C++ format
+      if (QualifierLoc != nullptr)
+        QualifierLoc->print(OS, Policy);
+      OS << Node->getNameInfo();
+    }
+    OS << ":";
+    VisitOMPClauseList(Node, ' ');
+    OS << ")";
+  }
+}
+
+void OMPClausePrinter::VisitOMPInReductionClause(OMPInReductionClause *Node) {
+  if (!Node->varlist_empty()) {
+    OS << "in_reduction(";
+    NestedNameSpecifier *QualifierLoc =
+        Node->getQualifierLoc().getNestedNameSpecifier();
+    OverloadedOperatorKind OOK =
+        Node->getNameInfo().getName().getCXXOverloadedOperator();
+    if (QualifierLoc == nullptr && OOK != OO_None) {
+      // Print reduction identifier in C format
+      OS << getOperatorSpelling(OOK);
+    } else {
+      // Use C++ format
+      if (QualifierLoc != nullptr)
+        QualifierLoc->print(OS, Policy);
+      OS << Node->getNameInfo();
+    }
+    OS << ":";
+    VisitOMPClauseList(Node, ' ');
     OS << ")";
   }
 }
@@ -1137,6 +1147,13 @@ void StmtPrinter::VisitOMPTaskgroupDirective(OMPTaskgroupDirective *Node) {
 
 void StmtPrinter::VisitOMPFlushDirective(OMPFlushDirective *Node) {
   Indent() << "#pragma omp flush ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPLastprivateUpdateDirective(
+    OMPLastprivateUpdateDirective *Node) {
+  // This is an internal directive.  Don't print the directive, just
+  // its controlled statement.
   PrintOMPExecutableDirective(Node);
 }
 

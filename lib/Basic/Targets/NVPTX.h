@@ -26,7 +26,7 @@ namespace targets {
 static const unsigned NVPTXAddrSpaceMap[] = {
     0, // Default
     1, // opencl_global
-    3, // opencl_local
+    5, // opencl_local
     4, // opencl_constant
     0, // opencl_private
     // FIXME: generic has to be added to the target
@@ -44,6 +44,7 @@ class LLVM_LIBRARY_VISIBILITY NVPTXTargetInfo : public TargetInfo {
   static const Builtin::Info BuiltinInfo[];
   CudaArch GPU;
   std::unique_ptr<TargetInfo> HostTarget;
+  bool hasFP64:1;
 
 public:
   NVPTXTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts,
@@ -64,8 +65,41 @@ public:
 
   bool hasFeature(StringRef Feature) const override;
 
-  ArrayRef<const char *> getGCCRegNames() const override;
+  /// \returns If a target requires an address within a target specific address
+  /// space \p AddressSpace to be converted in order to be used, then return the
+  /// corresponding target specific DWARF address space.
+  ///
+  /// \returns Otherwise return None and no conversion will be emitted in the
+  /// DWARF.
+  Optional<unsigned>
+  getDWARFAddressSpace(unsigned AddressSpace) const override {
+    enum {
+      ADDR_const_space = 4,
+      ADDR_global_space = 1,
+      ADDR_local_space = 5,
+      ADDR_shared_space = 3,
+    };
+    enum {
+      DWARF_ADDR_const_space = 4,
+      DWARF_ADDR_global_space = 5,
+      DWARF_ADDR_local_space = 6,
+      DWARF_ADDR_shared_space = 8,
+    };
+    switch (AddressSpace) {
+    case ADDR_global_space:           // LLVM Global.
+      return DWARF_ADDR_global_space; // DWARF Global.
+    case ADDR_shared_space:           // LLVM Shared.
+      return DWARF_ADDR_shared_space; // DWARF Shared.
+    case ADDR_const_space:            // LLVM Constant.
+      return DWARF_ADDR_const_space; // DWARF Constant.
+    case ADDR_local_space:           // LLVM Local.
+      return DWARF_ADDR_local_space;  // DWARF Local.
+    default:
+      return None;
+    }
+  }
 
+  ArrayRef<const char *> getGCCRegNames() const override;
   ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override {
     // No aliases.
     return None;

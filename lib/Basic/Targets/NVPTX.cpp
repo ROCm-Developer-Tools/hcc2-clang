@@ -42,6 +42,7 @@ NVPTXTargetInfo::NVPTXTargetInfo(const llvm::Triple &Triple,
          "NVPTX only supports 32- and 64-bit modes.");
 
   TLSSupported = false;
+  VLASupported = false;
   AddrSpaceMap = &NVPTXAddrSpaceMap;
   GridValues = (const int*) &(NVPTXGpuGridValues[0]);
   LongGridValues = (const long long *) &(NVPTXGpuLongGridValues[0]);
@@ -186,6 +187,8 @@ void NVPTXTargetInfo::getTargetDefines(const LangOptions &Opts,
         return "610";
       case CudaArch::SM_62:
         return "620";
+      case CudaArch::SM_70:
+        return "700";
       case CudaArch::GFX700: return "320";
       case CudaArch::GFX701: return "320";
       case CudaArch::GFX800: return "320";

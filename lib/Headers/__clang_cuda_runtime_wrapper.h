@@ -185,7 +185,6 @@ inline __host__ double __signbitd(double x) {
 #include "device_functions.hpp"
 #pragma pop_macro("__float2half_rn")
 
-
 // math_function.hpp uses the __USE_FAST_MATH__ macro to determine whether we
 // get the slow-but-accurate or fast-but-inaccurate versions of functions like
 // sin and exp.  This is controlled in clang by -fcuda-approx-transcendentals.
@@ -249,11 +248,6 @@ static inline __device__ void __brkpt(int __c) { __brkpt(); }
 // [addr+imm] addressing mode, which, although it doesn't actually exist in the
 // hardware, seems to generate faster machine code because ptxas can more easily
 // reason about our code.
-
-#if CUDA_VERSION >= 8000
-#include "sm_60_atomic_functions.hpp"
-#include "sm_61_intrinsics.hpp"
-#endif
 
 #undef __MATH_FUNCTIONS_HPP__
 

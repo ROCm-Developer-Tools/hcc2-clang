@@ -926,6 +926,9 @@ static void RenderDebugEnablingArgs(const ArgList &Args, ArgStringList &CmdArgs,
   case llvm::DebuggerKind::SCE:
     CmdArgs.push_back("-debugger-tuning=sce");
     break;
+  case llvm::DebuggerKind::CudaGDB:
+    CmdArgs.push_back("-debugger-tuning=cuda-gdb");
+    break;
   default:
     break;
   }
@@ -2699,6 +2702,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!HonorInfs && !HonorNans)
     CmdArgs.push_back("-ffinite-math-only");
 
+  Args.AddLastArg(CmdArgs, options::OPT_ftrap_EQ);
+  Args.AddLastArg(CmdArgs, options::OPT_ftrap_exact);
+  if (Args.hasArg(options::OPT_fnans_inject)) {
+    Args.AddLastArg(CmdArgs, options::OPT_fnans_inject);
+    CmdArgs.push_back("-mllvm");
+    CmdArgs.push_back("-nans-inject");
+  }
+
   // Decide whether to use verbose asm. Verbose assembly is the default on
   // toolchains which have the integrated assembler on by default.
   bool IsIntegratedAssemblerDefault =
@@ -2946,13 +2957,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       DebugInfoKind = codegenoptions::LimitedDebugInfo;
   }
 
+  bool IsOpenMPCudaDeviceDebug =
+      IsOpenMPDevice && DebuggerTuning == llvm::DebuggerKind::CudaGDB &&
+      (!areOptimizationsEnabled(Args) ||
+        Args.hasFlag(options::OPT_cuda_noopt_device_debug,
+                     options::OPT_no_cuda_noopt_device_debug,
+                     /*Default=*/false));
+
   // disable debun outpt for HCC kernel path
   if (!IsHCCKernelPath) {
 
   // Only allow debug lines output for HCC kernel path,
   // disable other debug info until it's fully supported
   if (!IsHCCKernelPath ||
-       DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
+        DebugInfoKind == codegenoptions::DebugLineTablesOnly) {
 
   // If a debugger tuning argument appeared, remember it.
   if (Arg *A = Args.getLastArg(options::OPT_gTune_Group,
@@ -2961,6 +2979,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       DebuggerTuning = llvm::DebuggerKind::LLDB;
     else if (A->getOption().matches(options::OPT_gsce))
       DebuggerTuning = llvm::DebuggerKind::SCE;
+    else if (A->getOption().matches(options::OPT_gcuda_gdb))
+      DebuggerTuning = llvm::DebuggerKind::CudaGDB;
     else
       DebuggerTuning = llvm::DebuggerKind::GDB;
   }
@@ -3025,8 +3045,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                     getToolChain().GetDefaultStandaloneDebug());
   if (DebugInfoKind == codegenoptions::LimitedDebugInfo && NeedFullDebug)
     DebugInfoKind = codegenoptions::FullDebugInfo;
-  RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DwarfVersion,
+
+  if (IsOpenMPCudaDeviceDebug || !IsOpenMPDevice ||
+      DebuggerTuning != llvm::DebuggerKind::CudaGDB) {
+    RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DwarfVersion,
                           DebuggerTuning);
+  }
 
   // -fdebug-macro turns on macro debug info generation.
   if (Args.hasFlag(options::OPT_fdebug_macro, options::OPT_fno_debug_macro,
@@ -3184,7 +3208,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.ClaimAllArgs(options::OPT_D);
 
   // Manually translate -O4 to -O3; let clang reject others.
-  if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+  if (IsOpenMPCudaDeviceDebug) {
+    CmdArgs.emplace_back("-O0");
+  } else if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
+
     if (A->getOption().matches(options::OPT_O4)) {
       CmdArgs.push_back("-O3");
       D.Diag(diag::warn_O4_is_O3);
@@ -4716,6 +4743,32 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
+  // OpenMP 4.5 standard does not allow to use any declaration in target region
+  // unless they are not specified inside of declare target region.
+  // Implicit declare target is an extension to enable using
+  // any declaration in target region.
+  if (Args.hasFlag(options::OPT_fopenmp_implicit_declare_target,
+                   options::OPT_fnoopenmp_implicit_declare_target,
+                   /*Default=*/false))
+    CmdArgs.push_back("-fopenmp-implicit-declare-target");
+
+  if(Args.hasFlag(options::OPT_fopenmp_implicit_map_lambdas,
+                  options::OPT_fnoopenmp_implicit_map_lambdas,
+                  false))
+    CmdArgs.push_back("-fopenmp-implicit-map-lambdas");
+
+  if (Args.hasFlag(options::OPT_fopenmp_nvptx_nospmd,
+                   options::OPT_fopenmp_nvptx_spmd,
+                   /*Default=*/false)) {
+    CmdArgs.push_back("-fopenmp-nvptx-nospmd");
+  }
+
+  if (Args.hasFlag(options::OPT_fopenmp_ignore_unmappable_types,
+                   options::OPT_fnoopenmp_ignore_unmappable_types,
+                   /*Default=*/false)) {
+    CmdArgs.push_back("-fopenmp-ignore-unmappable-types");
+  }
+
   // For all the host OpenMP offloading compile jobs we need to pass the targets
   // information using -fopenmp-targets= option.
   if (isa<CompileJobAction>(JA) && JA.isHostOffloading(Action::OFK_OpenMP)) {
@@ -5521,6 +5574,15 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
   assert(JA.getInputs().size() == Inputs.size() &&
          "Not have inputs for all dependence actions??");
 
+  // Get the arch
+  StringRef Arch = TCArgs.getLastArgValue(options::OPT_march_EQ);
+  if (Arch.empty())
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-arch=") + CLANG_OPENMP_NVPTX_DEFAULT_ARCH));
+  else
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-arch=") + Arch));
+
   // Get the targets.
   SmallString<128> Triples;
   Triples += "-targets=";
@@ -5585,8 +5647,23 @@ void OffloadBundler::ConstructJobMultipleOutputs(
   InputInfo Input = Inputs.front();
 
   // Get the type.
-  CmdArgs.push_back(TCArgs.MakeArgString(
-      Twine("-type=") + types::getTypeTempSuffix(Input.getType())));
+  StringRef InputFilname = Input.getFilename();
+  bool InputIsArchive = InputFilname.endswith(".a");
+  if (InputIsArchive)
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-type=a")));
+  else
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-type=") + types::getTypeTempSuffix(Input.getType())));
+
+  // Get the arch
+  StringRef Arch = TCArgs.getLastArgValue(options::OPT_march_EQ);
+  if (Arch.empty())
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-arch=") + CLANG_OPENMP_NVPTX_DEFAULT_ARCH));
+  else
+    CmdArgs.push_back(TCArgs.MakeArgString(
+        Twine("-arch=") + Arch));
 
   // Get the targets.
   SmallString<128> Triples;

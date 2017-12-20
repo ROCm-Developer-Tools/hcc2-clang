@@ -36,6 +36,9 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Object/Archive.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Option/Option.h"
@@ -417,6 +420,8 @@ void tools::AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
       CmdArgs.push_back("-plugin-opt=-debugger-tune=lldb");
     else if (A->getOption().matches(options::OPT_gsce))
       CmdArgs.push_back("-plugin-opt=-debugger-tune=sce");
+    else if (A->getOption().matches(options::OPT_gcuda_gdb))
+      CmdArgs.push_back("-plugin-opt=-debugger-tune=cuda-gdb");
     else
       CmdArgs.push_back("-plugin-opt=-debugger-tune=gdb");
   }
@@ -1127,20 +1132,20 @@ void tools::AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
 
   LksStream << "SECTIONS\n";
   LksStream << "{\n";
-  LksStream << "  .omp_offloading :\n";
-  LksStream << "  ALIGN(0x10)\n";
-  LksStream << "  {\n";
 
-  for (auto &BI : InputBinaryInfo) {
-    LksStream << "    . = ALIGN(0x10);\n";
+  // Put each target binary into a separate section.
+  for (const auto &BI : InputBinaryInfo) {
+    LksStream << "  .omp_offloading." << BI.first << " :\n";
+    LksStream << "  ALIGN(0x10)\n";
+    LksStream << "{\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_start." << BI.first
               << " = .);\n";
     LksStream << "    " << BI.second << "\n";
     LksStream << "    PROVIDE_HIDDEN(.omp_offloading.img_end." << BI.first
               << " = .);\n";
+    LksStream << "  }\n";
   }
 
-  LksStream << "  }\n";
   // Add commands to define host entries begin and end. We use 1-byte subalign
   // so that the linker does not add any padding and the elements in this
   // section form an array.

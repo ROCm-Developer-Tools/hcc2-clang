@@ -1944,9 +1944,16 @@ void OMPClauseWriter::VisitOMPLastprivateClause(OMPLastprivateClause *C) {
   Record.push_back(C->varlist_size());
   VisitOMPClauseWithPostUpdate(C);
   Record.AddSourceLocation(C->getLParenLoc());
+  Record.AddSourceLocation(C->getColonLoc());
+  Record.push_back(C->getModifier());
+  Record.AddSourceLocation(C->getModifierLoc());
   for (auto *VE : C->varlists())
     Record.AddStmt(VE);
   for (auto *E : C->private_copies())
+    Record.AddStmt(E);
+  for (auto *E : C->conditional_lastprivate_iterations())
+    Record.AddStmt(E);
+  for (auto *E : C->conditional_lastprivate_variables())
     Record.AddStmt(E);
   for (auto *E : C->source_exprs())
     Record.AddStmt(E);
@@ -1982,7 +1989,6 @@ void OMPClauseWriter::VisitOMPReductionClause(OMPReductionClause *C) {
     Record.AddStmt(E);
 }
 
-#if 0
 void OMPClauseWriter::VisitOMPTaskReductionClause(OMPTaskReductionClause *C) {
   Record.push_back(C->varlist_size());
   VisitOMPClauseWithPostUpdate(C);
@@ -2022,7 +2028,6 @@ void OMPClauseWriter::VisitOMPInReductionClause(OMPInReductionClause *C) {
   for (auto *E : C->taskgroup_descriptors())
     Record.AddStmt(E);
 }
-#endif
 
 void OMPClauseWriter::VisitOMPLinearClause(OMPLinearClause *C) {
   Record.push_back(C->varlist_size());
@@ -2092,6 +2097,14 @@ void OMPClauseWriter::VisitOMPFlushClause(OMPFlushClause *C) {
     Record.AddStmt(VE);
 }
 
+void OMPClauseWriter::VisitOMPLastprivateUpdateClause(
+    OMPLastprivateUpdateClause *C) {
+  Record.push_back(C->varlist_size());
+  Record.AddSourceLocation(C->getLParenLoc());
+  for (auto *VE : C->varlists())
+    Record.AddStmt(VE);
+}
+
 void OMPClauseWriter::VisitOMPDependClause(OMPDependClause *C) {
   Record.push_back(C->varlist_size());
   Record.AddSourceLocation(C->getLParenLoc());
@@ -2104,6 +2117,7 @@ void OMPClauseWriter::VisitOMPDependClause(OMPDependClause *C) {
 }
 
 void OMPClauseWriter::VisitOMPDeviceClause(OMPDeviceClause *C) {
+  VisitOMPClauseWithPreInit(C);
   Record.AddStmt(C->getDevice());
   Record.AddSourceLocation(C->getLParenLoc());
 }
@@ -2294,6 +2308,8 @@ void ASTStmtWriter::VisitOMPLoopDirective(OMPLoopDirective *D) {
   Record.AddStmt(D->getNumLanes());
   Record.AddStmt(D->getInc());
   Record.AddStmt(D->getPreInits());
+  Record.AddStmt(D->getConditionalLastprivateIterVariable());
+  Record.AddStmt(D->getConditionalLastprivateIterInit());
   if (isOpenMPWorksharingDirective(D->getDirectiveKind()) ||
       isOpenMPTaskLoopDirective(D->getDirectiveKind()) ||
       isOpenMPDistributeDirective(D->getDirectiveKind())) {
@@ -2358,6 +2374,7 @@ void ASTStmtWriter::VisitOMPSectionsDirective(OMPSectionsDirective *D) {
   Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Record.push_back(D->hasCancel() ? 1 : 0);
+  Record.AddStmt(D->getConditionalLastprivateIterVariable());
   Code = serialization::STMT_OMP_SECTIONS_DIRECTIVE;
 }
 
@@ -2407,6 +2424,7 @@ void ASTStmtWriter::VisitOMPParallelSectionsDirective(
   Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Record.push_back(D->hasCancel() ? 1 : 0);
+  Record.AddStmt(D->getConditionalLastprivateIterVariable());
   Code = serialization::STMT_OMP_PARALLEL_SECTIONS_DIRECTIVE;
 }
 
@@ -2490,19 +2508,16 @@ void ASTStmtWriter::VisitOMPBarrierDirective(OMPBarrierDirective *D) {
 
 void ASTStmtWriter::VisitOMPTaskwaitDirective(OMPTaskwaitDirective *D) {
   VisitStmt(D);
+  Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Code = serialization::STMT_OMP_TASKWAIT_DIRECTIVE;
 }
 
 void ASTStmtWriter::VisitOMPTaskgroupDirective(OMPTaskgroupDirective *D) {
   VisitStmt(D);
-#if 0
   Record.push_back(D->getNumClauses());
-#endif
   VisitOMPExecutableDirective(D);
-#if 0
   Record.AddStmt(D->getReductionRef());
-#endif
   Code = serialization::STMT_OMP_TASKGROUP_DIRECTIVE;
 }
 
@@ -2511,6 +2526,14 @@ void ASTStmtWriter::VisitOMPFlushDirective(OMPFlushDirective *D) {
   Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Code = serialization::STMT_OMP_FLUSH_DIRECTIVE;
+}
+
+void ASTStmtWriter::VisitOMPLastprivateUpdateDirective(
+    OMPLastprivateUpdateDirective *D) {
+  VisitStmt(D);
+  Record.push_back(D->getNumClauses());
+  VisitOMPExecutableDirective(D);
+  Code = serialization::STMT_OMP_LASTPRIVATE_UPDATE_DIRECTIVE;
 }
 
 void ASTStmtWriter::VisitOMPOrderedDirective(OMPOrderedDirective *D) {

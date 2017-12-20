@@ -11721,6 +11721,25 @@ ExprResult Sema::CreateBuiltinBinOp(SourceLocation OpLoc,
            dyn_cast<ObjCIvarRefExpr>(LHS.get()->IgnoreParenCasts()))
     DiagnoseDirectIsaAccess(*this, OIRE, OpLoc, RHS.get());
   
+  if (getLangOpts().OpenMP && CompResultTy.isNull() && BO_Assign == Opc) {
+    auto *RefExpr = LHS.get()->IgnoreParenCasts();
+    auto *DE = dyn_cast_or_null<DeclRefExpr>(RefExpr);
+    auto *ME = dyn_cast_or_null<MemberExpr>(RefExpr);
+    if (DE || ME) {
+      auto *Var = DE ? DE->getDecl() : ME->getMemberDecl();
+      if (Var) {
+        if (isOpenMPConditionalLastprivate(Var)) {
+          FPOptions fp_contract = (FPOptions) FPFeatures.getInt();
+          ExprResult PAssign = new (Context)
+              BinaryOperator(LHS.get(), RHS.get(), Opc, ResultTy, VK, OK, OpLoc,
+                             fp_contract);
+
+          return getOpenMPUpdateExprForConditionalLastprivate(
+              Var, PAssign.get(), OpLoc);
+        }
+      }
+    }
+  }
   if (CompResultTy.isNull())
     return new (Context) BinaryOperator(LHS.get(), RHS.get(), Opc, ResultTy, VK,
                                         OK, OpLoc, FPFeatures);
@@ -14313,8 +14332,13 @@ static bool captureInCapturedRegion(CapturedRegionScopeInfo *RSI,
   bool ByRef = true;
   // Using an LValue reference type is consistent with Lambdas (see below).
   if (S.getLangOpts().OpenMP && RSI->CapRegionKind == CR_OpenMP) {
-    if (S.IsOpenMPCapturedDecl(Var))
+    if (S.IsOpenMPCapturedDecl(Var)) {
+      bool HasConst = DeclRefType.isConstQualified();
       DeclRefType = DeclRefType.getUnqualifiedType();
+      // Don't lose diagnostics about assignments to const.
+      if (HasConst)
+        DeclRefType.addConst();
+    }
     ByRef = S.IsOpenMPCapturedByRef(Var, RSI->OpenMPLevel);
   }
 
@@ -14337,9 +14361,9 @@ static bool captureInCapturedRegion(CapturedRegionScopeInfo *RSI,
     Field->setImplicit(true);
     Field->setAccess(AS_private);
     RD->addDecl(Field);
-//  FIXME Trunk OpenMP != Coral OpenMP 
-//    if (S.getLangOpts().OpenMP && RSI->CapRegionKind == CR_OpenMP)
-//      S.setOpenMPCaptureKind(Field, Var, RSI->OpenMPLevel);
+//  FIXME Does this patch from new ykt tree fail for trunc?
+    if (S.getLangOpts().OpenMP && RSI->CapRegionKind == CR_OpenMP)
+      S.setOpenMPCaptureKind(Field, Var, RSI->OpenMPLevel);
  
     CopyExpr = new (S.Context) DeclRefExpr(Var, RefersToCapturedVariable,
                                             DeclRefType, VK_LValue, Loc);
@@ -14510,6 +14534,7 @@ bool Sema::tryCaptureVariable(
   bool IsGlobal = !Var->hasLocalStorage();
   if (IsGlobal && !(LangOpts.OpenMP && IsOpenMPCapturedDecl(Var)))
     return true;
+  Var = Var->getCanonicalDecl();
 
   // Walk up the stack to determine whether we can capture the variable,
   // performing the "simple" checks that don't depend on type. We stop when
@@ -14865,7 +14890,8 @@ static void DoMarkVarDeclReferenced(Sema &SemaRef, SourceLocation Loc,
       IsVariableAConstantExpression(Var, SemaRef.Context)) {
     // A reference initialized by a constant expression can never be
     // odr-used, so simply ignore it.
-    if (!Var->getType()->isReferenceType())
+    if (!Var->getType()->isReferenceType() ||
+        (SemaRef.LangOpts.OpenMP && SemaRef.IsOpenMPCapturedDecl(Var)))
       SemaRef.MaybeODRUseExprs.insert(E);
   } else if (OdrUseContext) {
     MarkVarDeclODRUsed(Var, Loc, SemaRef,

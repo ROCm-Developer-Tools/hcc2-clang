@@ -16,6 +16,10 @@ const char *CudaVersionToString(CudaVersion V) {
     return "7.5";
   case CudaVersion::CUDA_80:
     return "8.0";
+  case CudaVersion::CUDA_90:
+    return "9.0";
+  case CudaVersion::CUDA_91:
+    return "9.1";
   }
   llvm_unreachable("invalid enum");
 }
@@ -48,6 +52,8 @@ const char *CudaArchToString(CudaArch A) {
     return "sm_61";
   case CudaArch::SM_62:
     return "sm_62";
+  case CudaArch::SM_70:
+    return "sm_70";
   case CudaArch::GFX700://kaveri
     return "gfx700";
   case CudaArch::GFX701://hawaii
@@ -62,7 +68,7 @@ const char *CudaArchToString(CudaArch A) {
     return "gfx803";
   case CudaArch::GFX810://
     return "gfx810";
-  case CudaArch::GFX900: //
+  case CudaArch::GFX900: // Vega
     return "gfx900";
   case CudaArch::GFX901: //
     return "gfx901";
@@ -84,6 +90,7 @@ CudaArch StringToCudaArch(llvm::StringRef S) {
       .Case("sm_60", CudaArch::SM_60)
       .Case("sm_61", CudaArch::SM_61)
       .Case("sm_62", CudaArch::SM_62)
+      .Case("sm_70", CudaArch::SM_70)
       .Case("gfx700", CudaArch::GFX700)
       .Case("gfx701", CudaArch::GFX701)
       .Case("gfx800", CudaArch::GFX800)
@@ -122,6 +129,8 @@ const char *CudaVirtualArchToString(CudaVirtualArch A) {
     return "compute_61";
   case CudaVirtualArch::COMPUTE_62:
     return "compute_62";
+  case CudaVirtualArch::COMPUTE_70:
+    return "compute_70";
   case CudaVirtualArch::COMPUTE_GCN:
     return "compute_gcn";
   }
@@ -141,6 +150,7 @@ CudaVirtualArch StringToCudaVirtualArch(llvm::StringRef S) {
       .Case("compute_60", CudaVirtualArch::COMPUTE_60)
       .Case("compute_61", CudaVirtualArch::COMPUTE_61)
       .Case("compute_62", CudaVirtualArch::COMPUTE_62)
+      .Case("compute_70", CudaVirtualArch::COMPUTE_70)
       .Case("compute_gcn", CudaVirtualArch::COMPUTE_GCN)
       .Default(CudaVirtualArch::UNKNOWN);
 }
@@ -172,6 +182,8 @@ CudaVirtualArch VirtualArchForCudaArch(CudaArch A) {
     return CudaVirtualArch::COMPUTE_61;
   case CudaArch::SM_62:
     return CudaVirtualArch::COMPUTE_62;
+  case CudaArch::SM_70:
+    return CudaVirtualArch::COMPUTE_70;
   case CudaArch::GFX700:
   case CudaArch::GFX701:
   case CudaArch::GFX800:
@@ -204,6 +216,8 @@ CudaVersion MinVersionForCudaArch(CudaArch A) {
   case CudaArch::SM_61:
   case CudaArch::SM_62:
     return CudaVersion::CUDA_80;
+  case CudaArch::SM_70:
+    return CudaVersion::CUDA_90;
   case CudaArch::GFX700:
   case CudaArch::GFX701:
   case CudaArch::GFX800:

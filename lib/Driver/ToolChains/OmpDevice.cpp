@@ -27,6 +27,20 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
+// Convert an arg of the form "-gN" or "-ggdbN" or one of their aliases
+// to the corresponding DebugInfoKind.
+static codegenoptions::DebugInfoKind DebugLevelToInfoKind(const Arg &A) {
+  assert(A.getOption().matches(options::OPT_gN_Group) &&
+         "Not a -g option that specifies a debug-info level");
+  if (A.getOption().matches(options::OPT_g0) ||
+      A.getOption().matches(options::OPT_ggdb0))
+    return codegenoptions::NoDebugInfo;
+  if (A.getOption().matches(options::OPT_gline_tables_only) ||
+      A.getOption().matches(options::OPT_ggdb1))
+    return codegenoptions::DebugLineTablesOnly;
+  return codegenoptions::LimitedDebugInfo;
+}
+
 void OMPDEV::Backend::ConstructJob(Compilation &C, const JobAction &JA,
                                      const InputInfo &Output,
                                      const InputInfoList &Inputs,
@@ -109,8 +123,23 @@ void OMPDEV::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
   ArgStringList CmdArgs;
   CmdArgs.push_back(TC.getTriple().isArch64Bit() ? "-m64" : "-m32");
+  bool IsOpenMPDebug = false;
+  if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
+    IsOpenMPDebug = JA.isOffloading(Action::OFK_OpenMP) &&
+                    (!areOptimizationsEnabled(Args) ||
+                     Args.hasFlag(options::OPT_cuda_noopt_device_debug,
+                                  options::OPT_no_cuda_noopt_device_debug,
+                                  /*Default=*/false));
+    // If the last option explicitly specified a debug-info level, use it.
+    if (A->getOption().matches(options::OPT_gN_Group)) {
+      IsOpenMPDebug = IsOpenMPDebug &&
+                      DebugLevelToInfoKind(*A) != codegenoptions::NoDebugInfo;
+    }
+  }
   if (Args.hasFlag(options::OPT_cuda_noopt_device_debug,
-                   options::OPT_no_cuda_noopt_device_debug, false)) {
+                   options::OPT_no_cuda_noopt_device_debug, false) ||
+      IsOpenMPDebug) {
+
     // ptxas does not accept -g option if optimization is enabled, so
     // we ignore the compiler's -O* options if we want debug info.
     CmdArgs.push_back("-g");
@@ -248,24 +277,32 @@ void OMPDEV::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       if (!II.isFilename())
         continue;
 
-      StringRef Name = llvm::sys::path::filename(II.getFilename());
-      std::pair<StringRef, StringRef> Split = Name.rsplit('.');
-      std::string TmpName =
+      StringRef OrigInputFileName =
+          llvm::sys::path::filename(II.getBaseInput());
+      if (OrigInputFileName.endswith(".a")) {
+        const char *StaticLibName =
+            C.addTempFile(C.getArgs().MakeArgString(II.getFilename()));
+        CmdArgs.push_back(StaticLibName);
+      } else {
+        StringRef Name = llvm::sys::path::filename(II.getFilename());
+        std::pair<StringRef, StringRef> Split = Name.rsplit('.');
+        std::string TmpName =
           C.getDriver().GetTemporaryPath(Split.first, "cubin");
 
-      const char *CubinF =
+        const char *CubinF =
           C.addTempFile(C.getArgs().MakeArgString(TmpName.c_str()));
 
-      const char *CopyExec = Args.MakeArgString(getToolChain().GetProgramPath(
+        const char *CopyExec = Args.MakeArgString(getToolChain().GetProgramPath(
           C.getDriver().IsCLMode() ? "copy" : "cp"));
 
-      ArgStringList CopyCmdArgs;
-      CopyCmdArgs.push_back(II.getFilename());
-      CopyCmdArgs.push_back(CubinF);
-      C.addCommand(
+        ArgStringList CopyCmdArgs;
+        CopyCmdArgs.push_back(II.getFilename());
+        CopyCmdArgs.push_back(CubinF);
+        C.addCommand(
           llvm::make_unique<Command>(JA, *this, CopyExec, CopyCmdArgs, Inputs));
 
-      CmdArgs.push_back(CubinF);
+        CmdArgs.push_back(CubinF);
+      }
     }
 
     AddOpenMPLinkerScript(getToolChain(), C, Output, Inputs, Args, CmdArgs, JA);

@@ -50,6 +50,10 @@ static CudaVersion ParseCudaVersionFile(llvm::StringRef V) {
     return CudaVersion::CUDA_75;
   if (Major == 8 && Minor == 0)
     return CudaVersion::CUDA_80;
+  if (Major == 9 && Minor == 0)
+    return CudaVersion::CUDA_90;
+  if (Major == 9 && Minor == 1)
+    return CudaVersion::CUDA_91;
   return CudaVersion::UNKNOWN;
 }
 
@@ -60,11 +64,13 @@ CudaInstallationDetector::CudaInstallationDetector(
   SmallVector<std::string, 4> CudaPathCandidates;
 
   // In decreasing order so we prefer newer versions to older versions.
-  std::initializer_list<const char *> Versions = {"8.0", "7.5", "7.0"};
+  std::initializer_list<const char *> Versions = {"9.1","9.0", "8.0", "7.5", "7.0" };
 
   if (Args.hasArg(clang::driver::options::OPT_cuda_path_EQ)) {
     CudaPathCandidates.push_back(
         Args.getLastArgValue(clang::driver::options::OPT_cuda_path_EQ));
+  } else if (char *env = ::getenv("CUDAPATH")) {
+    CudaPathCandidates.push_back(D.SysRoot + env);
   } else if (HostTriple.isOSWindows()) {
     for (const char *Ver : Versions)
       CudaPathCandidates.push_back(
@@ -113,43 +119,72 @@ CudaInstallationDetector::CudaInstallationDetector(
       Version = ParseCudaVersionFile((*VersionFile)->getBuffer());
     }
 
-    std::error_code EC;
-    for (llvm::sys::fs::directory_iterator LI(LibDevicePath, EC), LE;
-         !EC && LI != LE; LI = LI.increment(EC)) {
-      StringRef FilePath = LI->path();
-      StringRef FileName = llvm::sys::path::filename(FilePath);
-      // Process all bitcode filenames that look like libdevice.compute_XX.YY.bc
-      const StringRef LibDeviceName = "libdevice.";
-      if (!(FileName.startswith(LibDeviceName) && FileName.endswith(".bc")))
-        continue;
-      StringRef GpuArch = FileName.slice(
-          LibDeviceName.size(), FileName.find('.', LibDeviceName.size()));
-      LibDeviceMap[GpuArch] = FilePath.str();
-      // Insert map entries for specifc devices with this compute
-      // capability. NVCC's choice of the libdevice library version is
-      // rather peculiar and depends on the CUDA version.
-      if (GpuArch == "compute_20") {
-        LibDeviceMap["sm_20"] = FilePath;
-        LibDeviceMap["sm_21"] = FilePath;
-        LibDeviceMap["sm_32"] = FilePath;
-      } else if (GpuArch == "compute_30") {
-        LibDeviceMap["sm_30"] = FilePath;
-        if (Version < CudaVersion::CUDA_80) {
-          LibDeviceMap["sm_50"] = FilePath;
-          LibDeviceMap["sm_52"] = FilePath;
-          LibDeviceMap["sm_53"] = FilePath;
+    SmallVector<std::string, 20> CudaArchStrs;
+    if (Version >= CudaVersion::CUDA_90) {
+      // CUDA-9,9.1 uses single libdevice file for all GPU variants.
+      std::string FilePath = LibDevicePath + "/libdevice.10.bc";
+      if (FS.exists(FilePath)) {
+        for (const char *GpuArch :
+            {"sm_20", "sm_30", "sm_32", "sm_35", "sm_37", "sm_50", "sm_52", "sm_53",
+             "sm_60", "sm_61", "sm_62", "sm_70"}) {
+          LibDeviceMap[GpuArch] = FilePath;
+          CudaArchStrs.push_back(GpuArch);
         }
-        LibDeviceMap["sm_60"] = FilePath;
-        LibDeviceMap["sm_61"] = FilePath;
-        LibDeviceMap["sm_62"] = FilePath;
-      } else if (GpuArch == "compute_35") {
-        LibDeviceMap["sm_35"] = FilePath;
-        LibDeviceMap["sm_37"] = FilePath;
-      } else if (GpuArch == "compute_50") {
-        if (Version >= CudaVersion::CUDA_80) {
-          LibDeviceMap["sm_50"] = FilePath;
-          LibDeviceMap["sm_52"] = FilePath;
-          LibDeviceMap["sm_53"] = FilePath;
+      }
+    } else {
+      std::error_code EC; 
+      for (llvm::sys::fs::directory_iterator LI(LibDevicePath, EC), LE;
+           !EC && LI != LE; LI = LI.increment(EC)) {
+        StringRef FilePath = LI->path();
+        StringRef FileName = llvm::sys::path::filename(FilePath);
+        // Process all bitcode filenames that look like libdevice.compute_XX.YY.bc
+        const StringRef LibDeviceName = "libdevice.";
+        if (!(FileName.startswith(LibDeviceName) && FileName.endswith(".bc")))
+          continue;
+        StringRef GpuArch = FileName.slice(
+          LibDeviceName.size(), FileName.find('.', LibDeviceName.size()));
+        LibDeviceMap[GpuArch] = FilePath.str();
+        // Insert map entries for specifc devices with this compute
+        // capability. NVCC's choice of the libdevice library version is
+        // rather peculiar and depends on the CUDA version.
+        if (GpuArch == "compute_20") {
+          LibDeviceMap["sm_20"] = FilePath;
+          LibDeviceMap["sm_21"] = FilePath;
+          LibDeviceMap["sm_32"] = FilePath;
+          CudaArchStrs.push_back("sm_20");
+          CudaArchStrs.push_back("sm_21");
+          CudaArchStrs.push_back("sm_32");
+        } else if (GpuArch == "compute_30") {
+          LibDeviceMap["sm_30"] = FilePath;
+          CudaArchStrs.push_back("sm_30");
+          if (Version < CudaVersion::CUDA_80) {
+            LibDeviceMap["sm_50"] = FilePath;
+            LibDeviceMap["sm_52"] = FilePath;
+            LibDeviceMap["sm_53"] = FilePath;
+            CudaArchStrs.push_back("sm_50");
+            CudaArchStrs.push_back("sm_52");
+            CudaArchStrs.push_back("sm_53");
+          }
+          LibDeviceMap["sm_60"] = FilePath;
+          LibDeviceMap["sm_61"] = FilePath;
+          LibDeviceMap["sm_62"] = FilePath;
+          CudaArchStrs.push_back("sm_60");
+          CudaArchStrs.push_back("sm_61");
+          CudaArchStrs.push_back("sm_62");
+        } else if (GpuArch == "compute_35") {
+          LibDeviceMap["sm_35"] = FilePath;
+          LibDeviceMap["sm_37"] = FilePath;
+          CudaArchStrs.push_back("sm_35");
+          CudaArchStrs.push_back("sm_37");
+        } else if (GpuArch == "compute_50") {
+          if (Version >= CudaVersion::CUDA_80) {
+            LibDeviceMap["sm_50"] = FilePath;
+            LibDeviceMap["sm_52"] = FilePath;
+            LibDeviceMap["sm_53"] = FilePath;
+            CudaArchStrs.push_back("sm_50");
+            CudaArchStrs.push_back("sm_52");
+            CudaArchStrs.push_back("sm_53");
+          }
         }
       }
     }
@@ -158,7 +193,7 @@ CudaInstallationDetector::CudaInstallationDetector(
     // no libdevice has been found.
     bool allEmpty = true;
     std::string LibDeviceFile;
-    for (auto key : LibDeviceMap.keys()) {
+    for (auto key : CudaArchStrs) {
       LibDeviceFile = LibDeviceMap.lookup(key);
       if (!LibDeviceFile.empty())
         allEmpty = false;
@@ -360,6 +395,20 @@ void NVPTX::Backend::ConstructJob(Compilation &C, const JobAction &JA,
   }
 }
 
+// Convert an arg of the form "-gN" or "-ggdbN" or one of their aliases
+// to the corresponding DebugInfoKind.
+static codegenoptions::DebugInfoKind DebugLevelToInfoKind(const Arg &A) {
+  assert(A.getOption().matches(options::OPT_gN_Group) &&
+         "Not a -g option that specifies a debug-info level");
+  if (A.getOption().matches(options::OPT_g0) ||
+      A.getOption().matches(options::OPT_ggdb0))
+    return codegenoptions::NoDebugInfo;
+  if (A.getOption().matches(options::OPT_gline_tables_only) ||
+      A.getOption().matches(options::OPT_ggdb1))
+    return codegenoptions::DebugLineTablesOnly;
+  return codegenoptions::LimitedDebugInfo;
+}
+
 void NVPTX::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
                                     const InputInfo &Output,
                                     const InputInfoList &Inputs,
@@ -425,8 +474,23 @@ void NVPTX::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
 
   ArgStringList CmdArgs;
   CmdArgs.push_back(TC.getTriple().isArch64Bit() ? "-m64" : "-m32");
+  bool IsOpenMPDebug = false;
+  if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
+    IsOpenMPDebug = JA.isOffloading(Action::OFK_OpenMP) &&
+                    (!areOptimizationsEnabled(Args) ||
+                     Args.hasFlag(options::OPT_cuda_noopt_device_debug,
+                                  options::OPT_no_cuda_noopt_device_debug,
+                                  /*Default=*/false));
+    // If the last option explicitly specified a debug-info level, use it.
+    if (A->getOption().matches(options::OPT_gN_Group)) {
+      IsOpenMPDebug = IsOpenMPDebug &&
+                      DebugLevelToInfoKind(*A) != codegenoptions::NoDebugInfo;
+    }
+  }
   if (Args.hasFlag(options::OPT_cuda_noopt_device_debug,
-                   options::OPT_no_cuda_noopt_device_debug, false)) {
+                   options::OPT_no_cuda_noopt_device_debug, false) ||
+      IsOpenMPDebug) {
+
     // ptxas does not accept -g option if optimization is enabled, so
     // we ignore the compiler's -O* options if we want debug info.
     CmdArgs.push_back("-g");
@@ -610,8 +674,7 @@ void NVPTX::OpenMPLinker::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_v))
     CmdArgs.push_back("-v");
 
-  StringRef GPUArch =
-      Args.getLastArgValue(options::OPT_march_EQ);
+  StringRef GPUArch = Args.getLastArgValue(options::OPT_march_EQ);
   assert(!GPUArch.empty() && "At least one GPU Arch required for ptxas.");
 
   CmdArgs.push_back("-arch");
@@ -699,13 +762,28 @@ void CudaToolChain::addClangTargetOptions(
                            options::OPT_fno_cuda_approx_transcendentals, false))
       CC1Args.push_back("-fcuda-approx-transcendentals");
 
-    if (DriverArgs.hasArg(options::OPT_nocudalib))
-      return;
   }
+
+  bool ForcedPTXVersion = false;
+  if (DeviceOffloadingKind == Action::OFK_OpenMP &&
+      DriverArgs.hasArg(options::OPT_fopenmp_ptx_EQ)) {
+    // Use the PTX version that the user specified.
+    const Arg *A = DriverArgs.getLastArg(options::OPT_fopenmp_ptx_EQ);
+    CC1Args.push_back("-target-feature");
+    CC1Args.push_back(A->getValue());
+    ForcedPTXVersion = true;
+  }
+
+  if (DriverArgs.hasArg(options::OPT_nocudalib))
+    return;
 
   std::string LibDeviceFile = CudaInstallation.getLibDeviceFile(GpuArch);
 
   if (LibDeviceFile.empty()) {
+    if (DeviceOffloadingKind == Action::OFK_OpenMP &&
+        DriverArgs.hasArg(options::OPT_S))
+    return;
+
     getDriver().Diag(diag::err_drv_no_cuda_libdevice) << GpuArch;
     return;
   }
@@ -718,12 +796,20 @@ void CudaToolChain::addClangTargetOptions(
 
   CC1Args.push_back("-mlink-cuda-bitcode");
   CC1Args.push_back(DriverArgs.MakeArgString(LibDeviceFile));
-
-  // Libdevice in CUDA-7.0 requires PTX version that's more recent
-  // than LLVM defaults to. Use PTX4.2 which is the PTX version that
-  // came with CUDA-7.0.
-  CC1Args.push_back("-target-feature");
-  CC1Args.push_back("+ptx42");
+   
+  if (!ForcedPTXVersion) {
+    if (CudaInstallation.version() >= CudaVersion::CUDA_90) {
+      // CUDA-9 uses new instructions that are only available in PTX6.0
+      CC1Args.push_back("-target-feature");
+      CC1Args.push_back("+ptx60");
+    } else {
+      // Libdevice in CUDA-7.0 requires PTX version that's more recent
+      // than LLVM defaults to. Use PTX4.2 which is the PTX version that
+      // came with CUDA-7.0.
+      CC1Args.push_back("-target-feature");
+      CC1Args.push_back("+ptx42");
+    }
+  }
 }
 
 void CudaToolChain::AddCudaIncludeArgs(const ArgList &DriverArgs,

@@ -3504,8 +3504,13 @@ void CGDebugInfo::EmitDeclare(const VarDecl *VD, llvm::Value *Storage,
   if (const auto *IPD = dyn_cast<ImplicitParamDecl>(VD)) {
     if (IPD->getParameterKind() == ImplicitParamDecl::CXXThis ||
         IPD->getParameterKind() == ImplicitParamDecl::ObjCSelf)
-      Flags |= llvm::DINode::FlagObjectPointer;
+    Flags |= llvm::DINode::FlagObjectPointer;
   }
+
+  if (auto *Arg = dyn_cast<llvm::Argument>(Storage))
+    if (Arg->getType()->isPointerTy() && !Arg->hasByValAttr() &&
+        !VD->getType()->isPointerType())
+       Expr.push_back(llvm::dwarf::DW_OP_deref);
 
   // Note: Older versions of clang used to emit byval references with an extra
   // DW_OP_deref, because they referenced the IR arg directly instead of

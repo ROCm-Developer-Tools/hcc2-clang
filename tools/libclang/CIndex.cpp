@@ -1991,6 +1991,8 @@ public:
   VisitOMPCancellationPointDirective(const OMPCancellationPointDirective *D);
   void VisitOMPCancelDirective(const OMPCancelDirective *D);
   void VisitOMPFlushDirective(const OMPFlushDirective *D);
+  void
+  VisitOMPLastprivateUpdateDirective(const OMPLastprivateUpdateDirective *D);
   void VisitOMPOrderedDirective(const OMPOrderedDirective *D);
   void VisitOMPAtomicDirective(const OMPAtomicDirective *D);
   void VisitOMPTargetDirective(const OMPTargetDirective *D);
@@ -2235,6 +2237,12 @@ void OMPClauseEnqueue::VisitOMPLastprivateClause(
   for (auto *E : C->private_copies()) {
     Visitor->AddStmt(E);
   }
+  for (auto *E : C->conditional_lastprivate_iterations()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->conditional_lastprivate_variables()) {
+    Visitor->AddStmt(E);
+  }
   for (auto *E : C->source_exprs()) {
     Visitor->AddStmt(E);
   }
@@ -2264,46 +2272,6 @@ void OMPClauseEnqueue::VisitOMPReductionClause(const OMPReductionClause *C) {
     Visitor->AddStmt(E);
   }
 }
-
-// FIXME Trunk OMP != coral OMP
-#if 0 
-void OMPClauseEnqueue::VisitOMPTaskReductionClause(
-    const OMPTaskReductionClause *C) {
-  VisitOMPClauseList(C);
-  VisitOMPClauseWithPostUpdate(C);
-  for (auto *E : C->privates()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->lhs_exprs()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->rhs_exprs()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->reduction_ops()) {
-    Visitor->AddStmt(E);
-  }
-}
-void OMPClauseEnqueue::VisitOMPInReductionClause(
-    const OMPInReductionClause *C) {
-  VisitOMPClauseList(C);
-  VisitOMPClauseWithPostUpdate(C);
-  for (auto *E : C->privates()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->lhs_exprs()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->rhs_exprs()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->reduction_ops()) {
-    Visitor->AddStmt(E);
-  }
-  for (auto *E : C->taskgroup_descriptors())
-    Visitor->AddStmt(E);
-}
-#endif 
 
 void OMPClauseEnqueue::VisitOMPLinearClause(const OMPLinearClause *C) {
   VisitOMPClauseList(C);
@@ -2355,6 +2323,10 @@ OMPClauseEnqueue::VisitOMPCopyprivateClause(const OMPCopyprivateClause *C) {
 void OMPClauseEnqueue::VisitOMPFlushClause(const OMPFlushClause *C) {
   VisitOMPClauseList(C);
 }
+void OMPClauseEnqueue::VisitOMPLastprivateUpdateClause(
+    const OMPLastprivateUpdateClause *C) {
+  VisitOMPClauseList(C);
+}
 void OMPClauseEnqueue::VisitOMPDependClause(const OMPDependClause *C) {
   VisitOMPClauseList(C);
 }
@@ -2379,6 +2351,40 @@ void OMPClauseEnqueue::VisitOMPUseDevicePtrClause(const OMPUseDevicePtrClause *C
 }
 void OMPClauseEnqueue::VisitOMPIsDevicePtrClause(const OMPIsDevicePtrClause *C) {
   VisitOMPClauseList(C);
+}
+void OMPClauseEnqueue::VisitOMPTaskReductionClause(const OMPTaskReductionClause *C) {
+  VisitOMPClauseList(C);
+  VisitOMPClauseWithPostUpdate(C);
+  for (auto *E : C->privates()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->lhs_exprs()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->rhs_exprs()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->reduction_ops()) {
+    Visitor->AddStmt(E);
+  }
+}
+void OMPClauseEnqueue::VisitOMPInReductionClause(const OMPInReductionClause *C) {
+  VisitOMPClauseList(C);
+  VisitOMPClauseWithPostUpdate(C);
+  for (auto *E : C->privates()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->lhs_exprs()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->rhs_exprs()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->reduction_ops()) {
+    Visitor->AddStmt(E);
+  }
+  for (auto *E : C->taskgroup_descriptors())
+    Visitor->AddStmt(E);
 }
 }
 
@@ -2762,13 +2768,16 @@ void EnqueueVisitor::VisitOMPTaskwaitDirective(const OMPTaskwaitDirective *D) {
 void EnqueueVisitor::VisitOMPTaskgroupDirective(
     const OMPTaskgroupDirective *D) {
   VisitOMPExecutableDirective(D);
-#if 0
   if (const Expr *E = D->getReductionRef())
     VisitStmt(E);
-#endif
 }
 
 void EnqueueVisitor::VisitOMPFlushDirective(const OMPFlushDirective *D) {
+  VisitOMPExecutableDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPLastprivateUpdateDirective(
+    const OMPLastprivateUpdateDirective *D) {
   VisitOMPExecutableDirective(D);
 }
 
@@ -5084,6 +5093,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPTaskgroupDirective");
   case CXCursor_OMPFlushDirective:
     return cxstring::createRef("OMPFlushDirective");
+  case CXCursor_OMPLastprivateUpdateDirective:
+    return cxstring::createRef("OMPLastprivateUpdateDirective");
   case CXCursor_OMPOrderedDirective:
     return cxstring::createRef("OMPOrderedDirective");
   case CXCursor_OMPAtomicDirective:

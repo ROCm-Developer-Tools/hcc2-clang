@@ -509,6 +509,14 @@ void
 OMPClauseProfiler::VisitOMPLastprivateClause(const OMPLastprivateClause *C) {
   VisitOMPClauseList(C);
   VistOMPClauseWithPostUpdate(C);
+  for (auto *E : C->conditional_lastprivate_iterations()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->conditional_lastprivate_variables()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
   for (auto *E : C->source_exprs()) {
     if (E)
       Profiler->VisitStmt(E);
@@ -549,60 +557,6 @@ void OMPClauseProfiler::VisitOMPReductionClause(
       Profiler->VisitStmt(E);
   }
 }
-#if 0
-void OMPClauseProfiler::VisitOMPTaskReductionClause(
-    const OMPTaskReductionClause *C) {
-  Profiler->VisitNestedNameSpecifier(
-      C->getQualifierLoc().getNestedNameSpecifier());
-  Profiler->VisitName(C->getNameInfo().getName());
-  VisitOMPClauseList(C);
-  VistOMPClauseWithPostUpdate(C);
-  for (auto *E : C->privates()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->lhs_exprs()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->rhs_exprs()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->reduction_ops()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-}
-void OMPClauseProfiler::VisitOMPInReductionClause(
-    const OMPInReductionClause *C) {
-  Profiler->VisitNestedNameSpecifier(
-      C->getQualifierLoc().getNestedNameSpecifier());
-  Profiler->VisitName(C->getNameInfo().getName());
-  VisitOMPClauseList(C);
-  VistOMPClauseWithPostUpdate(C);
-  for (auto *E : C->privates()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->lhs_exprs()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->rhs_exprs()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->reduction_ops()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-  for (auto *E : C->taskgroup_descriptors()) {
-    if (E)
-      Profiler->VisitStmt(E);
-  }
-}
-#endif
 void OMPClauseProfiler::VisitOMPLinearClause(const OMPLinearClause *C) {
   VisitOMPClauseList(C);
   VistOMPClauseWithPostUpdate(C);
@@ -666,6 +620,10 @@ OMPClauseProfiler::VisitOMPCopyprivateClause(const OMPCopyprivateClause *C) {
 void OMPClauseProfiler::VisitOMPFlushClause(const OMPFlushClause *C) {
   VisitOMPClauseList(C);
 }
+void OMPClauseProfiler::VisitOMPLastprivateUpdateClause(
+    const OMPLastprivateUpdateClause *C) {
+  VisitOMPClauseList(C);
+}
 void OMPClauseProfiler::VisitOMPDependClause(const OMPDependClause *C) {
   VisitOMPClauseList(C);
 }
@@ -716,6 +674,58 @@ void OMPClauseProfiler::VisitOMPUseDevicePtrClause(
 void OMPClauseProfiler::VisitOMPIsDevicePtrClause(
     const OMPIsDevicePtrClause *C) {
   VisitOMPClauseList(C);
+}
+void OMPClauseProfiler::VisitOMPTaskReductionClause(
+    const OMPTaskReductionClause *C) {
+  Profiler->VisitNestedNameSpecifier(
+      C->getQualifierLoc().getNestedNameSpecifier());
+  Profiler->VisitName(C->getNameInfo().getName());
+  VisitOMPClauseList(C);
+  VistOMPClauseWithPostUpdate(C);
+  for (auto *E : C->privates()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->lhs_exprs()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->rhs_exprs()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->reduction_ops()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+}
+void OMPClauseProfiler::VisitOMPInReductionClause(
+    const OMPInReductionClause *C) {
+  Profiler->VisitNestedNameSpecifier(
+      C->getQualifierLoc().getNestedNameSpecifier());
+  Profiler->VisitName(C->getNameInfo().getName());
+  VisitOMPClauseList(C);
+  VistOMPClauseWithPostUpdate(C);
+  for (auto *E : C->privates()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->lhs_exprs()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->rhs_exprs()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->reduction_ops()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
+  for (auto *E : C->taskgroup_descriptors()) {
+    if (E)
+      Profiler->VisitStmt(E);
+  }
 }
 }
 
@@ -804,13 +814,16 @@ void StmtProfiler::VisitOMPTaskwaitDirective(const OMPTaskwaitDirective *S) {
 
 void StmtProfiler::VisitOMPTaskgroupDirective(const OMPTaskgroupDirective *S) {
   VisitOMPExecutableDirective(S);
-#if 0
   if (const Expr *E = S->getReductionRef())
     VisitStmt(E);
-#endif
 }
 
 void StmtProfiler::VisitOMPFlushDirective(const OMPFlushDirective *S) {
+  VisitOMPExecutableDirective(S);
+}
+
+void StmtProfiler::VisitOMPLastprivateUpdateDirective(
+    const OMPLastprivateUpdateDirective *S) {
   VisitOMPExecutableDirective(S);
 }
 
