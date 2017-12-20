@@ -80,6 +80,14 @@ enum OpenMPDependClauseKind {
   OMPC_DEPEND_unknown
 };
 
+/// \brief OpenMP attributes for 'lastprivate' clause.
+enum OpenMPLastprivateClauseKind {
+#define OPENMP_LASTPRIVATE_MODIFIER(Name) \
+  OMPC_LASTPRIVATE_##Name,
+#include "clang/Basic/OpenMPKinds.def"
+  OMPC_LASTPRIVATE_unknown
+};
+
 /// \brief OpenMP attributes for 'linear' clause.
 enum OpenMPLinearClauseKind {
 #define OPENMP_LINEAR_KIND(Name) \
@@ -235,17 +243,16 @@ bool isOpenMPTaskingDirective(OpenMPDirectiveKind Kind);
 /// functions
 bool isOpenMPLoopBoundSharingDirective(OpenMPDirectiveKind Kind);
 
-/// Return the captured regions of an OpenMP directive.
-void getOpenMPCaptureRegions(
-    llvm::SmallVectorImpl<OpenMPDirectiveKind> &CaptureRegions,
-    OpenMPDirectiveKind DKind);
-
 /// \brief Checks if the specified directive requires an additional
 /// iteration variable.
 /// \param DKind Specified directive.
 /// \return true - the directive is a combined directive and requires an
 /// additional iteration variable, otherwise - false.
 bool requiresAdditionalIterationVar(OpenMPDirectiveKind DKind);
+
+/// Checks if the specified directive kind may have a conditional lastprivate
+/// clause.
+bool isOpenMPConditionalLastprivateDirective(OpenMPDirectiveKind Kind);
 }
 
 #endif

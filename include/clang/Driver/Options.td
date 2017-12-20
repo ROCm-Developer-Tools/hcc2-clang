@@ -955,7 +955,10 @@ def fno_trapping_math : Flag<["-"], "fno-trapping-math">, Group<f_Group>, Flags<
 def ffp_contract : Joined<["-"], "ffp-contract=">, Group<f_Group>,
   Flags<[CC1Option]>, HelpText<"Form fused FP ops (e.g. FMAs): fast (everywhere)"
   " | on (according to FP_CONTRACT pragma, default) | off (never fuse)">, Values<"fast,on,off">;
-
+def ftrap_EQ : Joined<["-"], "ftrap=">, Group<f_Group>,
+  Flags<[CC1Option]>, HelpText<"Determine IEEE trapping conditions. divz|fp|inexact|inv|none|ovf|unf values are acceptable">;
+def ftrap_exact : Flag<["-"], "ftrap-exact">, Group<f_Group>, Flags<[CC1Option]>;
+def fnans_inject : Flag<["-"], "fnans-inject">, Group<f_Group>, Flags<[CC1Option]>;
 def ffor_scope : Flag<["-"], "ffor-scope">, Group<f_Group>;
 def fno_for_scope : Flag<["-"], "fno-for-scope">, Group<f_Group>;
 
@@ -1329,12 +1332,16 @@ def fopenmp_ignore_unmappable_types : Flag<["-"], "fopenmp-ignore-unmappable-typ
 def fnoopenmp_ignore_unmappable_types : Flag<["-"], "fnoopenmp-ignore-unmappable-types">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_implicit_declare_target : Flag<["-"], "fopenmp-implicit-declare-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fnoopenmp_implicit_declare_target : Flag<["-"], "fnoopenmp-implicit-declare-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fopenmp_implicit_map_lambdas : Flag<["-"], "fopenmp-implicit-map-lambdas">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
+def fnoopenmp_implicit_map_lambdas : Flag<["-"], "fno-openmp-implicit-map-lambdas">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_nvptx_spmd : Flag<["-"], "fopenmp-nvptx-spmd">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fopenmp_nvptx_nospmd : Flag<["-"], "fopenmp-nvptx-nospmd">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_nvptx_requireruntime : Flag<["-"], "fopenmp-nvptx-requireruntime">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_nvptx_norequireruntime : Flag<["-"], "fopenmp-nvptx-norequireruntime">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fopenmp_targets_EQ : CommaJoined<["-"], "fopenmp-targets=">, Flags<[DriverOption, CC1Option]>,
   HelpText<"Specify comma-separated list of triples OpenMP offloading targets to be supported">;
+def fopenmp_ptx_EQ : Joined<["-"], "fopenmp-ptx=">, Flags<[DriverOption]>,
+  HelpText<"Pass a PTX version +ptxXX, default +ptx42 (for PTX version 4.2) used by OpenMP device offloading.">;
 def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>, 
   Flags<[NoArgumentUnused]>;
 def fopenmp_relocatable_target : Flag<["-"], "fopenmp-relocatable-target">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>,
@@ -1572,6 +1579,7 @@ def ggdb2 : Flag<["-"], "ggdb2">, Group<ggdbN_Group>;
 def ggdb3 : Flag<["-"], "ggdb3">, Group<ggdbN_Group>;
 def glldb : Flag<["-"], "glldb">, Group<gTune_Group>;
 def gsce : Flag<["-"], "gsce">, Group<gTune_Group>;
+def gcuda_gdb : Flag<["-"], "gcuda-gdb">, Group<gTune_Group>;
 def gdwarf_2 : Flag<["-"], "gdwarf-2">, Group<g_Group>,
   HelpText<"Generate source-level debug information with dwarf version 2">;
 def gdwarf_3 : Flag<["-"], "gdwarf-3">, Group<g_Group>,

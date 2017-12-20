@@ -8602,7 +8602,7 @@ def err_omp_global_var_arg : Error<
 def err_omp_ref_type_arg : Error<
   "arguments of '#pragma omp %0' cannot be of reference type %1">;
 def err_omp_region_not_file_context : Error<
-  "directive must be at file or namespace scope">;
+  "directive must be at file, namespace, or class scope">;
 def err_omp_var_scope : Error<
   "'#pragma omp %0' must appear in the scope of the %q1 variable declaration">;
 def err_omp_var_used : Error<
@@ -8615,6 +8615,8 @@ def err_omp_firstprivate_incomplete_type : Error<
   "a firstprivate variable with incomplete type %0">;
 def err_omp_lastprivate_incomplete_type : Error<
   "a lastprivate variable with incomplete type %0">;
+def err_omp_lastprivate_cond_wrong_type : Error<
+  "a lastprivate variable with conditional is of non-scalar type %0">;
 def err_omp_reduction_incomplete_type : Error<
   "a reduction list item with incomplete type %0">;
 def err_omp_unexpected_clause_value : Error<
@@ -8906,16 +8908,10 @@ def err_omp_expected_base_var_name : Error<
   "expected variable name as a base of the array %select{subscript|section}0">;
 def err_omp_map_shared_storage : Error<
   "variable already marked as mapped in current construct">;
-def err_omp_not_mappable_type : Error<
-  "type %0 is not mappable to target">;
 def err_omp_invalid_map_type_for_directive : Error<
   "%select{map type '%1' is not allowed|map type must be specified}0 for '#pragma omp %2'">;
-def err_omp_no_map_for_directive : Error<
-  "expected at least one map clause for '#pragma omp %0'">;
-def note_omp_polymorphic_in_target : Note<
-  "mappable type cannot be polymorphic">;
-def note_omp_static_member_in_target : Note<
-  "mappable type cannot contain static members">;
+def err_omp_no_clause_for_directive : Error<
+  "expected at least one %0 clause for '#pragma omp %1'">;
 def err_omp_threadprivate_in_clause : Error<
   "threadprivate variables are not allowed in '%0' clause">;
 def err_omp_wrong_ordered_loop_count : Error<
@@ -8934,16 +8930,10 @@ def note_omp_critical_hint_here : Note<
   "%select{|previous }0'hint' clause with value '%1'">;
 def note_omp_critical_no_hint : Note<
   "%select{|previous }0directive with no 'hint' clause specified">;
-def err_omp_firstprivate_distribute_private_teams : Error<
-  "private variable in '#pragma omp teams' cannot be firstprivate in '#pragma omp distribute'">;
-def err_omp_firstprivate_and_lastprivate_in_distribute : Error<
-  "lastprivate variable cannot be firstprivate in '#pragma omp distribute'">;
-def err_omp_firstprivate_distribute_in_teams_reduction : Error<
-  "reduction variable in '#pragma omp teams' cannot be firstprivate in '#pragma omp distribute'">;
 def err_omp_depend_clause_thread_simd : Error<
   "'depend' clauses cannot be mixed with '%0' clause">;
 def err_omp_depend_sink_expected_loop_iteration : Error<
-  "expected %0 loop iteration variable">;
+  "expected%select{| %1}0 loop iteration variable">;
 def err_omp_depend_sink_unexpected_expr : Error<
   "unexpected expression: number of expressions is larger than the number of associated loops">;
 def err_omp_depend_sink_expected_plus_minus : Error<
@@ -8984,6 +8974,12 @@ def err_omp_reduction_non_addressable_expression : Error<
   "expected addressable reduction item for the task-based directives">;
 def err_omp_reduction_with_nogroup : Error<
   "'reduction' clause cannot be used with 'nogroup' clause">;
+def err_omp_target_vla : Error<
+  "cannot use variable-length array in a %select{target|declare target}0 region">;
+def err_omp_target_reduction_vla : Error<
+  "cannot generate code for reduction on %select{|array section, which requires a }0variable-length array">;
+def note_omp_target_vla_support : Note<
+  "the target device does not support allocating variable-length arrays">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

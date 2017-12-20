@@ -2655,6 +2655,9 @@ DEF_TRAVERSE_STMT(OMPCancelDirective,
 DEF_TRAVERSE_STMT(OMPFlushDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
+DEF_TRAVERSE_STMT(OMPLastprivateUpdateDirective,
+                  { TRY_TO(TraverseOMPExecutableDirective(S)); })
+
 DEF_TRAVERSE_STMT(OMPOrderedDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
@@ -2930,6 +2933,12 @@ bool RecursiveASTVisitor<Derived>::VisitOMPLastprivateClause(
   for (auto *E : C->private_copies()) {
     TRY_TO(TraverseStmt(E));
   }
+  for (auto *E : C->conditional_lastprivate_iterations()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->conditional_lastprivate_variables()) {
+    TRY_TO(TraverseStmt(E));
+  }
   for (auto *E : C->source_exprs()) {
     TRY_TO(TraverseStmt(E));
   }
@@ -3029,56 +3038,15 @@ RecursiveASTVisitor<Derived>::VisitOMPReductionClause(OMPReductionClause *C) {
   return true;
 }
 
-#if 0
-template <typename Derived>
-bool RecursiveASTVisitor<Derived>::VisitOMPTaskReductionClause(
-    OMPTaskReductionClause *C) {
-  TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
-  TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
-  TRY_TO(VisitOMPClauseList(C));
-  TRY_TO(VisitOMPClauseWithPostUpdate(C));
-  for (auto *E : C->privates()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->lhs_exprs()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->rhs_exprs()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->reduction_ops()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  return true;
-}
-
-template <typename Derived>
-bool RecursiveASTVisitor<Derived>::VisitOMPInReductionClause(
-    OMPInReductionClause *C) {
-  TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
-  TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
-  TRY_TO(VisitOMPClauseList(C));
-  TRY_TO(VisitOMPClauseWithPostUpdate(C));
-  for (auto *E : C->privates()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->lhs_exprs()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->rhs_exprs()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->reduction_ops()) {
-    TRY_TO(TraverseStmt(E));
-  }
-  for (auto *E : C->taskgroup_descriptors())
-    TRY_TO(TraverseStmt(E));
-  return true;
-}
-#endif
-
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPFlushClause(OMPFlushClause *C) {
+  TRY_TO(VisitOMPClauseList(C));
+  return true;
+}
+
+template <typename Derived>
+bool RecursiveASTVisitor<Derived>::VisitOMPLastprivateUpdateClause(
+    OMPLastprivateUpdateClause *C) {
   TRY_TO(VisitOMPClauseList(C));
   return true;
 }
@@ -3091,6 +3059,7 @@ bool RecursiveASTVisitor<Derived>::VisitOMPDependClause(OMPDependClause *C) {
 
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPDeviceClause(OMPDeviceClause *C) {
+  TRY_TO(VisitOMPClauseWithPreInit(C));
   TRY_TO(TraverseStmt(C->getDevice()));
   return true;
 }
@@ -3181,6 +3150,52 @@ template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPIsDevicePtrClause(
     OMPIsDevicePtrClause *C) {
   TRY_TO(VisitOMPClauseList(C));
+  return true;
+}
+
+template <typename Derived>
+bool
+RecursiveASTVisitor<Derived>::VisitOMPTaskReductionClause(OMPTaskReductionClause *C) {
+  TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
+  TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
+  TRY_TO(VisitOMPClauseList(C));
+  TRY_TO(VisitOMPClauseWithPostUpdate(C));
+  for (auto *E : C->privates()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->lhs_exprs()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->rhs_exprs()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->reduction_ops()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  return true;
+}
+
+template <typename Derived>
+bool
+RecursiveASTVisitor<Derived>::VisitOMPInReductionClause(OMPInReductionClause *C) {
+  TRY_TO(TraverseNestedNameSpecifierLoc(C->getQualifierLoc()));
+  TRY_TO(TraverseDeclarationNameInfo(C->getNameInfo()));
+  TRY_TO(VisitOMPClauseList(C));
+  TRY_TO(VisitOMPClauseWithPostUpdate(C));
+  for (auto *E : C->privates()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->lhs_exprs()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->rhs_exprs()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->reduction_ops()) {
+    TRY_TO(TraverseStmt(E));
+  }
+  for (auto *E : C->taskgroup_descriptors())
+    TRY_TO(TraverseStmt(E));
   return true;
 }
 
