@@ -429,7 +429,7 @@ CGOpenMPRuntimeNVPTX::getNVPTXWarpActiveNumThreads(CodeGenFunction &CGF) {
   } else
     return CGF.EmitRuntimeCall(
       llvm::Intrinsic::getDeclaration(&CGM.getModule(),
-                                      llvm::Intrinsic::ctpop),
+                                      llvm::Intrinsic::ctpop, CGF.Int32Ty),
       getNVPTXWarpActiveThreadsMask(CGF), "warp_active_num_threads");
 }
 
@@ -453,7 +453,7 @@ CGOpenMPRuntimeNVPTX::getNVPTXWarpActiveThreadID(CodeGenFunction &CGF) {
     auto *Sh = Bld.CreateShl(Mask, ShNum);
     return CGF.EmitRuntimeCall(
       llvm::Intrinsic::getDeclaration(&CGM.getModule(),
-                                      llvm::Intrinsic::ctpop),
+                                      llvm::Intrinsic::ctpop, CGF.Int32Ty),
       Sh, "warp_active_thread_id");
   }
 }
