@@ -337,6 +337,8 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
                       : DataLayoutStringR600);
   assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
+  HasAtomicLoadOp = true;
+  HasAtomicStoreOp = true;
   GCN_Subarch = CudaArch::GFX803; /*default to Fiji */
   GridValues = (const int*) &(AMDGPUGpuGridValues[0]);
   LongGridValues = (const long long *) &(AMDGPUGpuLongGridValues[0]);

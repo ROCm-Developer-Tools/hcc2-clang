@@ -47,6 +47,8 @@ NVPTXTargetInfo::NVPTXTargetInfo(const llvm::Triple &Triple,
   GridValues = (const int*) &(NVPTXGpuGridValues[0]);
   LongGridValues = (const long long *) &(NVPTXGpuLongGridValues[0]);
   UseAddrSpaceMapMangling = true;
+  HasAtomicLoadOp = false;
+  HasAtomicStoreOp = false;
 
   // Define available target features
   // These must be defined in sorted order!

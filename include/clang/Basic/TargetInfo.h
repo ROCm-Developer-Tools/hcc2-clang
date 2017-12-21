@@ -64,6 +64,8 @@ protected:
   bool VLASupported;
   bool NoAsmVariants;  // True if {|} are normal characters.
   bool HasFloat128;
+  bool HasAtomicLoadOp;
+  bool HasAtomicStoreOp;
   unsigned char PointerWidth, PointerAlign;
   unsigned char BoolWidth, BoolAlign;
   unsigned char IntWidth, IntAlign;
@@ -468,6 +470,11 @@ public:
            (AtomicSizeInBits <= getCharWidth() ||
             llvm::isPowerOf2_64(AtomicSizeInBits / getCharWidth()));
   }
+
+/// \brief Returns true if the target has an atomic load operation.
+  virtual bool hasAtomicLoadOp() const { return HasAtomicLoadOp; }
+  /// \brief Returns true if the target has an atomic store operation.
+  virtual bool hasAtomicStoreOp() const { return HasAtomicStoreOp; }
 
   /// \brief Return the maximum vector alignment supported for the given target.
   unsigned getMaxVectorAlign() const { return MaxVectorAlign; }
