@@ -2506,18 +2506,31 @@ CGOpenMPRuntimeNVPTX::outlineTargetDirective(const OMPExecutableDirective &D,
   WrapperCGF.GenerateOpenMPCapturedStmtParameters(
       CS, UseCapturedArgumentsOnly, /*CaptureLevel=*/1, /*ImplicitParamStop=*/0,
       CGM.getCodeGenOpts().OpenmpNonaliasedMaps, /*UIntPtrCastRequired=*/true,
-      Args, /* IsKernel*/ false);
+      Args, /* argsNeedAddrSpace*/ true);
 
   // Pointer to a scratchpad location to store intermediate results of a
   // teams reduction.
+  QualType scratch_type = Ctx.VoidPtrTy;
+  if (Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)
+    scratch_type = Ctx.getAddrSpaceQualType(scratch_type,LangAS::cuda_device);
   const VarDecl *ScratchpadArg = ImplicitParamDecl::Create(
       Ctx, /*DC=*/nullptr, SourceLocation(), &Ctx.Idents.get("scratchpad_ptr"),
-      Ctx.VoidPtrTy, ImplicitParamDecl::Other);
+      scratch_type, ImplicitParamDecl::Other);
   Args.emplace_back(ScratchpadArg);
 
-  FunctionType::ExtInfo ExtInfo;
-  const CGFunctionInfo &FuncInfo =
-      CGM.getTypes().arrangeBuiltinFunctionDeclaration(Ctx.VoidTy, Args);
+  // Need Canonical Param Types WITH addrspace qualifier
+  SmallVector<CanQualType, 16> argCanQualTypes;
+  for (const auto &Arg : Args) {
+    if (unsigned address_space = Arg->getType().getAddressSpace() )
+      argCanQualTypes.push_back(CanQualType::CreateUnsafe(
+          Ctx.getAddrSpaceQualType( Ctx.getCanonicalParamType(Arg->getType()),
+              address_space)));
+    else
+      argCanQualTypes.push_back(Ctx.getCanonicalParamType(Arg->getType()));
+  }
+  const CGFunctionInfo &FuncInfo = CGM.getTypes().arrangeLLVMFunctionInfo(
+      Ctx.VoidTy, false, false, argCanQualTypes,
+      FunctionType::ExtInfo(), {}, RequiredArgs::All);
   llvm::FunctionType *FuncLLVMTy = CGM.getTypes().GetFunctionType(FuncInfo);
   llvm::Function *WrapperFn = llvm::Function::Create(
       FuncLLVMTy, llvm::GlobalValue::InternalLinkage, Name, &CGM.getModule());
@@ -2526,6 +2539,9 @@ CGOpenMPRuntimeNVPTX::outlineTargetDirective(const OMPExecutableDirective &D,
   if (CD->isNothrow())
     WrapperFn->setDoesNotThrow();
 
+  if (Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)
+    WrapperFn->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
+
   WrapperCGF.StartFunction(CD, Ctx.VoidTy, WrapperFn, FuncInfo, Args,
                            CS.getLocStart(), CD->getBody()->getLocStart());
 
@@ -2533,6 +2549,10 @@ CGOpenMPRuntimeNVPTX::outlineTargetDirective(const OMPExecutableDirective &D,
   const OMPExecutableDirective &TD = *getTeamsDirective(WrapperCGF.CGM, D);
   if (isOpenMPTeamsDirective(TD.getDirectiveKind())) {
     Address LocalAddr = WrapperCGF.GetAddrOfLocalVar(ScratchpadArg);
+    if (Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)
+      LocalAddr = WrapperCGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
+         LocalAddr,
+         WrapperCGF.getTypes().ConvertType(Ctx.VoidPtrTy)->getPointerTo());
     LValue ArgLVal = WrapperCGF.MakeAddrLValue(
         LocalAddr, ScratchpadArg->getType(), 
         LValueBaseInfo(AlignmentSource::Decl, false));

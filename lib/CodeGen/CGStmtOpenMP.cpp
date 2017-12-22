@@ -284,7 +284,7 @@ static Address castValueFromUintptr(CodeGenFunction &CGF, QualType DstType,
                                     StringRef Name, LValue AddrLV,
                                     bool isReferenceType = false) {
   ASTContext &Ctx = CGF.getContext();
- // FIXME: Address space of unsigned int by Ctx.getUIntPtrType() could be always 0
+ // FIXME: Addrspace of unsigned int by Ctx.getUIntPtrType() could be always 0
   QualType DstPtrQT = Ctx.getAddrSpaceQualType(
     Ctx.getPointerType(DstType),
     Ctx.getTargetAddressSpace(Ctx.getUIntPtrType())
@@ -294,7 +294,7 @@ static Address castValueFromUintptr(CodeGenFunction &CGF, QualType DstType,
      CGF.CGM.getLangOpts().OpenMPIsDevice) {
     auto* Ty = CGF.ConvertType(Ctx.getPointerType(DstType));
     auto *PTy = dyn_cast<llvm::PointerType>(Ty);
-    // For device path, add addrspacecast if needed before emit scalar conversion
+    // For device path, add addrspacecast if needed before emitscalar conversion
     if (PTy && PTy->getAddressSpace() != Addr.getAddressSpace())
       Addr = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Addr, Ty);
   }
@@ -359,10 +359,10 @@ namespace {
 static llvm::Function *emitOutlinedFunctionPrologue(
     CodeGenFunction &CGF, FunctionArgList &Args,
     llvm::MapVector<const Decl *, std::pair<const VarDecl *, Address>>
-        &LocalAddrs,
+    &LocalAddrs,
     llvm::DenseMap<const Decl *, std::pair<const Expr *, llvm::Value *>>
-        &VLASizes,
-    llvm::Value *&CXXThisValue, const FunctionOptions &FO, bool isKernel) {
+    &VLASizes, llvm::Value *&CXXThisValue, const FunctionOptions &FO, 
+    bool argsNeedAddrSpace) {
   const CapturedDecl *CD = FO.S->getCapturedDecl();
   const RecordDecl *RD = FO.S->getCapturedRecordDecl();
   assert(CD->hasBody() && "missing CapturedDecl body");
@@ -374,7 +374,7 @@ static llvm::Function *emitOutlinedFunctionPrologue(
 
   CGF.GenerateOpenMPCapturedStmtParameters(*(FO.S), 
     FO.UseCapturedArgumentsOnly, FO.CaptureLevel, FO.ImplicitParamStop, 
-    FO.NonAliasedMaps, FO.UIntPtrCastRequired, Args, isKernel);
+    FO.NonAliasedMaps, FO.UIntPtrCastRequired, Args, argsNeedAddrSpace);
 
   unsigned ImplicitParamStop = FO.ImplicitParamStop == 0
                                    ? CD->getContextParamPosition()
@@ -439,10 +439,6 @@ static llvm::Function *emitOutlinedFunctionPrologue(
 
   if (CD->isNothrow())
     F->setDoesNotThrow();
-
-  if ((Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn) &&
-    CGM.getLangOpts().OpenMPIsDevice && isKernel)
-    F->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
 
   // Generate the function.
   CGF.StartFunction(CD, Ctx.VoidTy, F, FuncInfo, TargetArgs,
@@ -583,9 +579,8 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
   bool NeedWrapperFunction =
       getDebugInfo() &&
       CGM.getCodeGenOpts().getDebugInfo() >= codegenoptions::LimitedDebugInfo;
-  bool isKernel = false;
-  if (!NeedWrapperFunction)
-    isKernel = (
+  bool argsNeedAddrSpace = false;
+  argsNeedAddrSpace = (
       CapturedStmtInfo->getHelperName().str().find("__omp_offloading_")
       != std::string::npos );
   FunctionArgList Args;
@@ -600,7 +595,7 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
                      ImplicitParamStop, NonAliasedMaps, !NeedWrapperFunction,
                      /*RegisterCastedArgsOnly=*/false, Out.str());
   llvm::Function *F = emitOutlinedFunctionPrologue(*this, Args, LocalAddrs,
-                                         VLASizes, CXXThisValue, FO, isKernel);
+                                VLASizes, CXXThisValue, FO, argsNeedAddrSpace);
   for (const auto &LocalAddrPair : LocalAddrs) {
     if (LocalAddrPair.second.first) {
       setAddrOfLocalVar(LocalAddrPair.second.first,
@@ -624,11 +619,15 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
   Args.clear();
   LocalAddrs.clear();
   VLASizes.clear();
-  isKernel = (CapturedStmtInfo->getHelperName().str().find("__omp_offloading_")
-    != std::string::npos);
+  argsNeedAddrSpace = 
+     (CapturedStmtInfo->getHelperName().str().find("__omp_offloading_")
+       != std::string::npos); 
+
   llvm::Function *WrapperF =
       emitOutlinedFunctionPrologue(WrapperCGF, Args, LocalAddrs, VLASizes,
-                                 WrapperCGF.CXXThisValue, WrapperFO, isKernel);
+                        WrapperCGF.CXXThisValue, WrapperFO, argsNeedAddrSpace);
+  if (CGM.getTriple().getArch()==llvm::Triple::amdgcn && argsNeedAddrSpace)
+    WrapperF->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
   llvm::SmallVector<llvm::Value *, 4> CallArgs;
   for (const auto *Arg : Args) {
     llvm::Value *CallArg;
@@ -661,7 +660,7 @@ llvm::Function *CodeGenFunction::GenerateOpenMPCapturedStmtFunction(
 void CodeGenFunction::GenerateOpenMPCapturedStmtParameters(
     const CapturedStmt &S, bool UseCapturedArgumentsOnly, unsigned CaptureLevel,
     unsigned ImplicitParamStop, bool NonAliasedMaps, bool UIntPtrCastRequired,
-    FunctionArgList &Args , bool isKernel ) {
+    FunctionArgList &Args , bool argsNeedAddrSpace ) {
   const CapturedDecl *CD = S.getCapturedDecl();
   const RecordDecl *RD = S.getCapturedRecordDecl();
   assert(CD->hasBody() && "missing CapturedDecl body");
@@ -719,7 +718,7 @@ void CodeGenFunction::GenerateOpenMPCapturedStmtParameters(
       ArgType = ArgType.withRestrict();
 
     // For amdgcn, need to set AS for reference kernel args
-    if ( CapVar && CGM.getLangOpts().OpenMPIsDevice && isKernel &&
+    if ( CapVar && CGM.getLangOpts().OpenMPIsDevice && argsNeedAddrSpace &&
       (Ctx.getTargetInfo().getTriple().getArch()==llvm::Triple::amdgcn)) {
       const clang::Type* ty  = ArgType.getTypePtr();
       if( ty->isAnyPointerType() || ty->isReferenceType() ){
@@ -1011,9 +1010,9 @@ bool CodeGenFunction::EmitOMPCopyinClause(const OMPExecutableDirective &D) {
           CopyBegin = createBasicBlock("copyin.not.master");
           CopyEnd = createBasicBlock("copyin.not.master.end");
           Builder.CreateCondBr(
-              Builder.CreateICmpNE(
-                  Builder.CreatePtrToInt(MasterAddr.getPointer(), CGM.IntPtrTy),
-                  Builder.CreatePtrToInt(PrivateAddr.getPointer(), CGM.IntPtrTy)),
+            Builder.CreateICmpNE(
+              Builder.CreatePtrToInt(MasterAddr.getPointer(), CGM.IntPtrTy),
+              Builder.CreatePtrToInt(PrivateAddr.getPointer(), CGM.IntPtrTy)),
               CopyBegin, CopyEnd);
           EmitBlock(CopyBegin);
         }

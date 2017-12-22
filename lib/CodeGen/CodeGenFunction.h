@@ -2659,7 +2659,7 @@ public:
   void GenerateOpenMPCapturedStmtParameters(
       const CapturedStmt &S, bool UseCapturedArgumentsOnly,
       unsigned CaptureLevel, unsigned ImplicitParamStop, bool NonAliasedMaps,
-      bool UIntPtrCastRequired, FunctionArgList &Args, bool IsKernel);
+      bool UIntPtrCastRequired, FunctionArgList &Args, bool argsNeedAddrSpace);
   Address GenerateCapturedStmtArgument(const CapturedStmt &S);
   llvm::Function *GenerateOpenMPCapturedStmtFunction(
       const CapturedStmt &S, bool UseCapturedArgumentsOnly = false,
