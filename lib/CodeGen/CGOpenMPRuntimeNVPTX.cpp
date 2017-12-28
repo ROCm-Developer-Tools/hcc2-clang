@@ -1564,8 +1564,10 @@ void CGOpenMPRuntimeNVPTX::WorkerFunctionState::createWorkerFunction(
       /* placeholder */ "_worker", &CGM.getModule());
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, WorkerFn, *CGFI);
   WorkerFn->setLinkage(llvm::GlobalValue::InternalLinkage);
-  WorkerFn->removeFnAttr(llvm::Attribute::NoInline);
-  WorkerFn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    WorkerFn->removeFnAttr(llvm::Attribute::NoInline);
+    WorkerFn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
 }
 
 void CGOpenMPRuntimeNVPTX::emitWorkerFunction(WorkerFunctionState &WST) {
@@ -1992,7 +1994,9 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
   case OMPRTL_NVPTX__kmpc_kernel_convergent_parallel: {
     /// \brief Call to bool __kmpc_kernel_convergent_parallel(
     /// void *buffer, uint32_t Mask, bool *IsFinal, kmpc_int32 *LaneSource);
-    llvm::Type *TypeParams[] = {CGM.Int8PtrTy, CGM.Int32Ty, CGM.Int8PtrTy,
+    llvm::Type *MaskTy = (CGM.getTriple().getArch()==llvm::Triple::amdgcn) ?
+      CGM.Int64Ty : CGM.Int32Ty;
+    llvm::Type *TypeParams[] = {CGM.Int8PtrTy, MaskTy, CGM.Int8PtrTy,
                                 CGM.Int32Ty->getPointerTo()};
     llvm::FunctionType *FnTy =
         llvm::FunctionType::get(llvm::Type::getInt1Ty(CGM.getLLVMContext()),
@@ -2014,8 +2018,10 @@ CGOpenMPRuntimeNVPTX::createNVPTXRuntimeFunction(unsigned Function) {
     /// \brief Call to bool __kmpc_kernel_convergent_simd(
     /// void *buffer, uint32_t Mask, bool *IsFinal, kmpc_int32 *LaneSource,
     /// kmpc_int32 *LaneId, kmpc_int32 *NumLanes);
+    llvm::Type *MaskTy = (CGM.getTriple().getArch()==llvm::Triple::amdgcn) ?
+      CGM.Int64Ty : CGM.Int32Ty;
     llvm::Type *TypeParams[] = {CGM.Int8PtrTy,
-                                CGM.Int32Ty,
+                                MaskTy,
                                 CGM.Int8PtrTy,
                                 CGM.Int32Ty->getPointerTo(),
                                 CGM.Int32Ty->getPointerTo(),
@@ -2480,8 +2486,10 @@ CGOpenMPRuntimeNVPTX::outlineTargetDirective(const OMPExecutableDirective &D,
   Out << Name << "_impl__";
   llvm::Function *OutlinedFn =
       CGOpenMPRuntime::outlineTargetDirective(D, Out.str(), CodeGen);
-  OutlinedFn->removeFnAttr(llvm::Attribute::NoInline);
-  OutlinedFn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    OutlinedFn->removeFnAttr(llvm::Attribute::NoInline);
+    OutlinedFn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
   OutlinedFn->setLinkage(llvm::GlobalValue::InternalLinkage);
 
   //
@@ -3940,9 +3948,9 @@ llvm::Function *CGOpenMPRuntimeNVPTX::createDataSharingParallelWrapper(
       OutlinedParallelFn.getName() + "_wrapper", &CGM.getModule());
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
   if (CGM.getTriple().getArch() != llvm::Triple::amdgcn) {
-  Fn->removeFnAttr(llvm::Attribute::NoInline);
-  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
-  Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
+    Fn->removeFnAttr(llvm::Attribute::NoInline);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+    Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
   } else {
     // For amdgcn, we need unique wrapper with external linkage because
     // select_outline_wrapper replaces function pointer used for nvptx.
@@ -4329,13 +4337,18 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
     CodeGenFunction &CGF, SourceLocation Loc, llvm::Value *OutlinedFn,
     ArrayRef<llvm::Value *> CapturedVars, const Expr *IfCond) {
 
+  bool Is_amdgcn = (CGM.getTriple().getArch()==llvm::Triple::amdgcn) ?
+    true : false;
+
   llvm::Function *Fn = cast<llvm::Function>(OutlinedFn);
   llvm::Function *WFn = WrapperFunctionsMap[Fn];
   assert(WFn && "Wrapper function does not exist??");
 
   // Force inline this outlined function at its call site.
-  Fn->removeFnAttr(llvm::Attribute::NoInline);
-  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    Fn->removeFnAttr(llvm::Attribute::NoInline);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
 
   // Emit code that does the data sharing changes in the beginning of the
@@ -4343,7 +4356,8 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
   createDataSharingPerFunctionInfrastructure(CGF);
 
   auto *RTLoc = emitUpdateLocation(CGF, Loc);
-  auto &&L0ParallelGen = [this, WFn](CodeGenFunction &CGF, PrePostActionTy &) {
+  auto &&L0ParallelGen = [this, WFn, Is_amdgcn]
+                         (CodeGenFunction &CGF, PrePostActionTy &) {
     CGBuilderTy &Bld = CGF.Builder;
 
     llvm::Value* ID;
@@ -4352,7 +4366,7 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
     //   FunctionPtr is not allowed in AMDGCN
     //   Replace it with hash code of function name
 
-    if (CGM.getTriple().getArch() == llvm::Triple::amdgcn) {
+    if (Is_amdgcn) {
       auto HashCode = llvm::hash_value(WFn->getName());
       auto Size = llvm::ConstantInt::get(CGM.SizeTy, HashCode);
       ID = Bld.CreateIntToPtr(Size, CGM.Int8PtrTy);
@@ -4377,8 +4391,8 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
     // Remember for post-processing in worker loop.
     Work.push_back(WFn);
   };
-  auto &&L1ParallelGen = [this, WFn, &CapturedVars, &RTLoc,
-                          &Loc](CodeGenFunction &CGF, PrePostActionTy &) {
+  auto &&L1ParallelGen = [this, WFn, &CapturedVars, &RTLoc, &Loc, Is_amdgcn]
+                         (CodeGenFunction &CGF, PrePostActionTy &) {
     CGBuilderTy &Bld = CGF.Builder;
     clang::ASTContext &Ctx = CGF.getContext();
 
@@ -4388,7 +4402,9 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
     Address WorkSource =
         CGF.CreateTempAlloca(CGF.Int32Ty, CharUnits::fromQuantity(4),
                              /*Name*/ "work_source");
-    Address ConvergentMask =
+    Address ConvergentMask = Is_amdgcn ?
+        CGF.CreateTempAlloca(CGF.Int64Ty, CharUnits::fromQuantity(8),
+                             /*Name*/ "convergent_mask"):
         CGF.CreateTempAlloca(CGF.Int32Ty, CharUnits::fromQuantity(4),
                              /*Name*/ "convergent_mask");
     llvm::APInt TaskBufferSize(/*numBits=*/32, TASK_STATE_SIZE);
@@ -4409,14 +4425,22 @@ void CGOpenMPRuntimeNVPTX::emitGenericParallelCall(
 
     // Initialize WorkSource before each call to the parallel region.
     Bld.CreateStore(Bld.getInt32(/*C=*/-1), WorkSource);
-    Bld.CreateStore(getNVPTXWarpActiveThreadsMask(CGF), ConvergentMask);
+    if (Is_amdgcn)
+      Bld.CreateStore(getNVPTXWarpActiveThreadsMask64(CGF), ConvergentMask);
+    else
+      Bld.CreateStore(getNVPTXWarpActiveThreadsMask(CGF), ConvergentMask);
 
     CGF.EmitBranch(DoBodyBB);
     CGF.EmitBlock(DoBodyBB);
     auto ArrayDecay = Bld.CreateConstInBoundsGEP2_32(
         llvm::ArrayType::get(CGM.Int8Ty, TASK_STATE_SIZE), TaskState,
         /*Idx0=*/0, /*Idx1=*/0);
-    auto *MaskVal = CGF.EmitLoadOfScalar(
+    auto *MaskVal = Is_amdgcn ?
+      CGF.EmitLoadOfScalar(
+        ConvergentMask, /*Volatile=*/false,
+        Ctx.getIntTypeForBitwidth(/*DestWidth=*/64, /*Signed=*/false),
+        SourceLocation()) :
+      CGF.EmitLoadOfScalar(
         ConvergentMask, /*Volatile=*/false,
         Ctx.getIntTypeForBitwidth(/*DestWidth=*/32, /*Signed=*/false),
         SourceLocation());
@@ -4550,20 +4574,26 @@ void CGOpenMPRuntimeNVPTX::emitSimdCall(CodeGenFunction &CGF,
   if (!CGF.HaveInsertPoint())
     return;
 
+  bool Is_amdgcn = (CGM.getTriple().getArch()==llvm::Triple::amdgcn) ?
+    true : false;
+
   llvm::Function *Fn = cast<llvm::Function>(OutlinedFn);
   llvm::Function *WFn = WrapperFunctionsMap[Fn];
   assert(WFn && "Wrapper function does not exist??");
 
   // Force inline this outlined function at its call site.
-  Fn->removeFnAttr(llvm::Attribute::NoInline);
-  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    Fn->removeFnAttr(llvm::Attribute::NoInline);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
   Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
 
   // Emit code that does the data sharing changes in the beginning of the
   // function.
   createDataSharingPerFunctionInfrastructure(CGF);
 
-  auto &&L1SimdGen = [this, WFn](CodeGenFunction &CGF, PrePostActionTy &) {
+  auto &&L1SimdGen = [this, WFn, Is_amdgcn]
+                     (CodeGenFunction &CGF, PrePostActionTy &) {
     CGBuilderTy &Bld = CGF.Builder;
     clang::ASTContext &Ctx = CGF.getContext();
 
@@ -4585,9 +4615,13 @@ void CGOpenMPRuntimeNVPTX::emitSimdCall(CodeGenFunction &CGF,
     auto TaskState = CGF.CreateMemTemp(TaskBufferTy, CharUnits::fromQuantity(8),
                                        /*Name=*/"task_state")
                          .getPointer();
-    auto ConvergentMask =
-        CGF.CreateTempAlloca(CGF.Int32Ty, CharUnits::fromQuantity(4),
+    auto ConvergentMask = Is_amdgcn ?
+      CGF.CreateTempAlloca(CGF.Int64Ty, CharUnits::fromQuantity(8),
+                             /*Name*/ "convergent_mask"):
+      CGF.CreateTempAlloca(CGF.Int32Ty, CharUnits::fromQuantity(4),
                              /*Name*/ "convergent_mask");
+
+    // Initialize WorkSource before each call to the simd region.
     Bld.CreateStore(Bld.getInt8(0), IsFinal);
     Bld.CreateStore(Bld.getInt32(-1), WorkSource);
 
@@ -4596,19 +4630,27 @@ void CGOpenMPRuntimeNVPTX::emitSimdCall(CodeGenFunction &CGF,
     llvm::BasicBlock *DoCondBB = CGF.createBasicBlock(".do.cond");
     llvm::BasicBlock *DoEndBB = CGF.createBasicBlock(".do.end");
 
-    // Initialize WorkSource before each call to the simd region.
     Bld.CreateStore(Bld.getInt32(/*C=*/-1), WorkSource);
-    Bld.CreateStore(getNVPTXWarpActiveThreadsMask(CGF), ConvergentMask);
+    if (Is_amdgcn)
+      Bld.CreateStore(getNVPTXWarpActiveThreadsMask64(CGF), ConvergentMask);
+    else
+      Bld.CreateStore(getNVPTXWarpActiveThreadsMask(CGF), ConvergentMask);
 
     CGF.EmitBranch(DoBodyBB);
     CGF.EmitBlock(DoBodyBB);
     auto ArrayDecay = Bld.CreateConstInBoundsGEP2_32(
         llvm::ArrayType::get(CGM.Int8Ty, SIMD_STATE_SIZE), TaskState,
         /*Idx0=*/0, /*Idx1=*/0);
-    auto *MaskVal = CGF.EmitLoadOfScalar(
+    auto *MaskVal = Is_amdgcn ?
+      CGF.EmitLoadOfScalar(
+        ConvergentMask, /*Volatile=*/false,
+        Ctx.getIntTypeForBitwidth(/*DestWidth=*/64, /*Signed=*/false),
+        SourceLocation()) :
+      CGF.EmitLoadOfScalar(
         ConvergentMask, /*Volatile=*/false,
         Ctx.getIntTypeForBitwidth(/*DestWidth=*/32, /*Signed=*/false),
         SourceLocation());
+
     llvm::Value *Args[] = {ArrayDecay,           MaskVal,
                            IsFinal.getPointer(), WorkSource.getPointer(),
                            LaneId.getPointer(),  NumLanes.getPointer()};
@@ -6172,9 +6214,11 @@ llvm::Value *EmitReduceScratchpadFunction(CodeGenModule &CGM,
       "_omp_reduction_load_and_reduce", &CGM.getModule());
   Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*DC=*/nullptr, Fn, CGFI);
-  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
-  Fn->removeFnAttr(llvm::Attribute::NoInline);
-  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+    Fn->removeFnAttr(llvm::Attribute::NoInline);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
   // user code.
@@ -6603,9 +6647,11 @@ EmitShuffleAndReduceFunction(CodeGenModule &CGM,
       "_omp_reduction_shuffle_and_reduce_func", &CGM.getModule());
   Dot2Underbar(Fn);
   CGM.SetInternalFunctionAttributes(/*D=*/nullptr, Fn, CGFI);
-  Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
-  Fn->removeFnAttr(llvm::Attribute::NoInline);
-  Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  if (CGM.getCodeGenOpts().OptimizationLevel) {
+    Fn->removeFnAttr(llvm::Attribute::OptimizeNone);
+    Fn->removeFnAttr(llvm::Attribute::NoInline);
+    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
+  }
   CodeGenFunction CGF(CGM);
   // We don't need debug information in this function as nothing here refers to
   // user code.

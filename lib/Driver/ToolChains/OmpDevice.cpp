@@ -594,7 +594,6 @@ void OmpDeviceToolChain::addClangTargetOptions(
     getDriver().Diag(diag::err_drv_no_cuda_libdevice) << GpuArch;
     return;
   }
-
 #if 0
   // Do not add -link-cuda-bitcode or ptx42 features if gfx
   for (Arg *A : DriverArgs)
@@ -616,7 +615,8 @@ void OmpDeviceToolChain::addClangTargetOptions(
         }
       }
 
-      std::string LibOmpTargetName = "libomptarget-nvptx.bc";
+      const char* LibOmpTargetName = 
+        DriverArgs.MakeArgString("libomptarget-nvptx-" + GpuArch + ".bc");
       bool FoundBCLibrary = false;
       for (std::string LibraryPath : LibraryPaths) {
         SmallString<128> LibOmpTargetFile(LibraryPath);

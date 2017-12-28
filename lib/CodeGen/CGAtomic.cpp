@@ -38,8 +38,6 @@ namespace {
     CharUnits LValueAlign;
     TypeEvaluationKind EvaluationKind;
     bool UseLibcall;
-    bool TargetHasAtomicLoadOp = true;
-    bool TargetHasAtomicStoreOp = true;
     LValue LVal;
     CGBitFieldInfo BFI;
   public:
@@ -130,8 +128,6 @@ namespace {
       }
       UseLibcall = !C.getTargetInfo().hasBuiltinAtomic(
           AtomicSizeInBits, C.toBits(lvalue.getAlignment()));
-      TargetHasAtomicLoadOp = C.getTargetInfo().hasAtomicLoadOp();
-      TargetHasAtomicStoreOp = C.getTargetInfo().hasAtomicStoreOp();
     }
 
     QualType getAtomicType() const { return AtomicTy; }
@@ -141,8 +137,6 @@ namespace {
     uint64_t getAtomicSizeInBits() const { return AtomicSizeInBits; }
     uint64_t getValueSizeInBits() const { return ValueSizeInBits; }
     TypeEvaluationKind getEvaluationKind() const { return EvaluationKind; }
-    bool targetHasAtomicLoadOp() const { return TargetHasAtomicLoadOp; }
-    bool targetHasAtomicStoreOp() const { return TargetHasAtomicStoreOp; }
     bool shouldUseLibcall() const { return UseLibcall; }
     const LValue &getAtomicLValue() const { return LVal; }
     llvm::Value *getAtomicPointer() const {
@@ -557,7 +551,7 @@ static void EmitAtomicOp(CodeGenFunction &CGF, AtomicExpr *E, Address Dest,
   case AtomicExpr::AO__atomic_load: {
     llvm::LoadInst *Load = CGF.Builder.CreateLoad(Ptr);
    /// Add atomic qualifier, if the target supports an atomic load operation.
-    if (Atomics.targetHasAtomicLoadOp())
+    if (CGF.getContext().getTargetInfo().hasAtomicLoadOp())
       Load->setAtomic(Order, Scope);
     Load->setVolatile(E->isVolatile());
     CGF.Builder.CreateStore(Load, Dest);
@@ -571,7 +565,7 @@ static void EmitAtomicOp(CodeGenFunction &CGF, AtomicExpr *E, Address Dest,
     llvm::Value *LoadVal1 = CGF.Builder.CreateLoad(Val1);
     llvm::StoreInst *Store = CGF.Builder.CreateStore(LoadVal1, Ptr);
     /// Add atomic qualifier, if target has atomic store operation.
-    if (Atomics.targetHasAtomicStoreOp())
+    if (CGF.getContext().getTargetInfo().hasAtomicStoreOp())
       Store->setAtomic(Order, Scope);
     Store->setVolatile(E->isVolatile());
     return;
@@ -1439,7 +1433,7 @@ llvm::Value *AtomicInfo::EmitAtomicLoadOp(llvm::AtomicOrdering AO,
   // Okay, we're doing this natively.
   Address Addr = getAtomicAddressAsAtomicIntPointer();
   llvm::LoadInst *Load = CGF.Builder.CreateLoad(Addr, "atomic-load");
-  if (targetHasAtomicLoadOp())
+  if (CGF.getContext().getTargetInfo().hasAtomicLoadOp())
     Load->setAtomic(AO);
 
   // Other decoration.
@@ -1956,7 +1950,7 @@ void CodeGenFunction::EmitAtomicStore(RValue rvalue, LValue dest,
     llvm::StoreInst *store = Builder.CreateStore(intValue, addr);
 
     // Initializations don't need to be atomic.
-    if (!isInit && atomics.targetHasAtomicStoreOp())
+    if (!isInit && getContext().getTargetInfo().hasAtomicStoreOp())
       store->setAtomic(AO);
 
     // Other decoration.
