@@ -756,6 +756,7 @@ enum OpenMPRTLFunction {
   // *host_ptr, int32_t arg_num, void** args_base, void **args, size_t
   // *arg_sizes, int64_t *arg_types, int32_t num_teams, int32_t thread_limit);
   OMPRTL__tgt_target_teams_nowait,
+  OMPRTL__tgt_target_teams_nowait_depend,
   // Call to void __tgt_register_lib(__tgt_bin_desc *desc);
   OMPRTL__tgt_register_lib,
   // Call to void __tgt_unregister_lib(__tgt_bin_desc *desc);
@@ -2299,6 +2300,29 @@ CGOpenMPRuntime::createRuntimeFunction(unsigned Function) {
     llvm::FunctionType *FnTy =
         llvm::FunctionType::get(CGM.Int32Ty, TypeParams, /*isVarArg*/ false);
     RTLFn = CGM.CreateRuntimeFunction(FnTy, "__tgt_target_teams_nowait");
+    break;
+  }
+  case OMPRTL__tgt_target_teams_nowait_depend: {
+    // Build int32_t __tgt_target_teams_nowait(int64_t device_id, void
+    // *host_ptr, int32_t arg_num, void** args_base, void **args, size_t
+    // *arg_sizes, int64_t *arg_types, int32_t num_teams, int32_t thread_limit);
+    llvm::Type *TypeParams[] = {CGM.Int64Ty,
+                                CGM.VoidPtrTy,
+                                CGM.Int32Ty,
+                                CGM.VoidPtrPtrTy,
+                                CGM.VoidPtrPtrTy,
+                                CGM.SizeTy->getPointerTo(),
+                                CGM.Int64Ty->getPointerTo(),
+                                CGM.Int32Ty,
+                                CGM.Int32Ty,
+        CGM.Int32Ty,
+        CGM.VoidPtrTy,
+        CGM.Int32Ty,
+        CGM.VoidPtrTy,
+                                };
+    llvm::FunctionType *FnTy =
+        llvm::FunctionType::get(CGM.Int32Ty, TypeParams, /*isVarArg*/ false);
+    RTLFn = CGM.CreateRuntimeFunction(FnTy, "__tgt_target_teams_nowait_depend");
     break;
   }
   case OMPRTL__tgt_register_lib: {
@@ -7602,11 +7626,34 @@ void CGOpenMPRuntime::emitTargetCall(
           Info.PointersArray, Info.SizesArray,
           Info.MapTypesArray, NumTeams,
           ThreadLimit};
-      if (hasNowait)
-        Return = CGF.EmitRuntimeCall(
+      if (hasNowait) {
+          if(HasDepend) {
+              llvm::SmallVector<llvm::Value *, llvm::array_lengthof(OffloadingArgs)> Args(
+                      std::begin(OffloadingArgs), std::end(OffloadingArgs));
+              Args.reserve(Args.size() + 4);
+              llvm::SmallVector<DependenceType, 4> Dependences;
+              for (const auto *C : D.getClausesOfKind<OMPDependClause>())
+                  for (auto *IRef : C->varlists())
+                      Dependences.emplace_back(C->getDependencyKind(), IRef);
+              Address DependenciesArray =
+                  emitDependences(CGF, Dependences, RT.KmpDependInfoTy);
+              // Number of dependences.
+              Args.emplace_back(CGF.Builder.getInt32(Dependences.size()));
+              // List of dependences.
+              Args.emplace_back(DependenciesArray.getPointer());
+              // Number of non-aliasing dependences.
+              Args.emplace_back(CGF.Builder.getInt32(/*C=*/0));
+              // List of non-aliasing dependences.
+              Args.emplace_back(llvm::ConstantPointerNull::get(CGF.VoidPtrTy));
+              Return = CGF.EmitRuntimeCall(
+                RT.createRuntimeFunction(OMPRTL__tgt_target_teams_nowait_depend),
+                Args);
+          }
+        else
+          Return = CGF.EmitRuntimeCall(
             RT.createRuntimeFunction(OMPRTL__tgt_target_teams_nowait),
             OffloadingArgs);
-      else
+      } else
         Return = CGF.EmitRuntimeCall(
             RT.createRuntimeFunction(OMPRTL__tgt_target_teams), OffloadingArgs);
     } else {
